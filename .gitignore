@@ -1,0 +1,4 @@
+/stash
+*.db
+*.key
+.DS_Store
