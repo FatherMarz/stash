@@ -4,7 +4,50 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>stash — a tiny secrets store for AI agents</title>
-<meta name="description" content="A tiny secrets store for AI agents. One 7 MB binary, one encrypted file. Per-agent tokens, audit log, proxy mode. Open source, MIT.">
+<meta name="description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. Per-agent tokens, audit log, proxy mode. MIT.">
+<link rel="canonical" href="https://stash.modul4r.com/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="stash">
+<meta property="og:title" content="stash — a tiny secrets store for AI agents">
+<meta property="og:description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. Per-agent tokens, audit log, proxy mode. MIT.">
+<meta property="og:url" content="https://stash.modul4r.com/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="stash — a tiny secrets store for AI agents">
+<meta name="twitter:description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. Per-agent tokens, audit log, proxy mode. MIT.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://stash.modul4r.com/#app",
+      "name": "stash",
+      "description": "A tiny open-source secrets store for AI agents. One 7 MB binary encrypts secrets with AES-256-GCM into a single file and serves them over a token-protected HTTP API, with per-agent tokens, an audit log, and a proxy mode where agents never see the key.",
+      "url": "https://stash.modul4r.com/",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "license": "https://github.com/FatherMarz/stash/blob/main/LICENSE",
+      "downloadUrl": "https://github.com/FatherMarz/stash",
+      "softwareVersion": "0.2.0",
+      "author": { "@id": "https://stash.modul4r.com/#author" }
+    },
+    {
+      "@type": "Person",
+      "@id": "https://stash.modul4r.com/#author",
+      "name": "Marcello Delcaro",
+      "url": "https://modul4r.com"
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://stash.modul4r.com/#site",
+      "name": "stash",
+      "url": "https://stash.modul4r.com/",
+      "about": { "@id": "https://stash.modul4r.com/#app" }
+    }
+  ]
+}
+</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23242721'/><rect x='3' y='6' width='10' height='7' fill='none' stroke='%23d69c4a' stroke-width='1.5'/><path d='M5.5 6V4.5a2.5 2.5 0 0 1 5 0V6' fill='none' stroke='%23d69c4a' stroke-width='1.5'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

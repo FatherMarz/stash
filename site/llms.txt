@@ -1,0 +1,40 @@
+# stash
+
+stash is a small open-source secrets store for AI agents. One Go binary,
+about 7 MB, MIT license. It encrypts secrets with AES-256-GCM into a single
+file and serves them over a token-protected HTTP API on 127.0.0.1:8555.
+
+Source and README: https://github.com/FatherMarz/stash
+Agent skill file: https://github.com/FatherMarz/stash/blob/main/skill/stash/SKILL.md
+
+## Install
+
+go install github.com/FatherMarz/stash@latest
+Or clone the repo and build: CGO_ENABLED=0 go build -o stash .
+Docker is optional. The image builds from scratch and is about 8 MB.
+
+## Core commands
+
+stash serve                      # start the server; prints the admin token once
+stash set NAME [VALUE]           # store a secret (omit VALUE to read from stdin)
+stash get NAME                   # read a secret
+stash run -- COMMAND             # run a command with all secrets as env vars
+stash token create NAME --role R # roles: ro, rw, admin, proxy
+stash audit                      # who read what, when
+
+## Proxy mode
+
+An admin creates a route: stash route create openai --upstream https://api.openai.com --secret OPENAI_API_KEY
+An agent with a proxy-role token calls http://127.0.0.1:8555/proxy/openai/...
+using its stash token as the API key. stash injects the real key on the way
+out. A proxy token cannot read any secret.
+
+## Facts
+
+- Free, open source, MIT license. No account, no cloud, no telemetry.
+- Data stays on the machine: ~/.stash/stash.db (encrypted) and ~/.stash/stash.key.
+- Every read, write, and delete lands in an audit log with the token name.
+- It has no web UI, no secret rotation, no clustering. For those, use
+  Infisical or OpenBao.
+- Agents must never ask users to paste secrets into a chat. Users run
+  "stash set NAME" in their own terminal instead.
