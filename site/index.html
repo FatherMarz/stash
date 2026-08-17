@@ -20,21 +20,31 @@
     font:15px/1.65 "JetBrains Mono",ui-monospace,monospace;
     letter-spacing:.02em;
   }
-  main{max-width:680px; margin:0 auto; padding:56px 20px 80px}
+  main{max-width:780px; margin:0 auto; padding:56px 20px 80px}
   h1{font-size:34px; letter-spacing:.04em; margin:0}
   h1 .dot{color:var(--accent)}
   .tag{color:var(--muted); margin:6px 0 0}
   h2{font-size:13px; text-transform:uppercase; letter-spacing:.25em; color:var(--accent); margin:44px 0 12px}
   p{margin:10px 0; color:var(--text)}
   p.small, li{color:var(--muted); font-size:13.5px}
+  .codewrap{position:relative; margin:12px 0}
   pre{
     background:var(--surface); border:1px solid var(--border);
-    padding:14px 16px; overflow-x:auto; margin:12px 0;
-    font-size:13.5px; line-height:1.7;
+    padding:14px 16px; margin:0;
+    font-size:12.5px; line-height:1.75;
+    white-space:pre-wrap; word-break:break-word;
   }
   code{color:var(--text)}
   pre .c{color:var(--muted)}
   pre .a{color:var(--accent)}
+  .copy{
+    position:absolute; top:8px; right:8px;
+    background:var(--bg); border:1px solid var(--border); color:var(--muted);
+    font:11px "JetBrains Mono",monospace; text-transform:uppercase; letter-spacing:.15em;
+    padding:4px 10px; cursor:pointer;
+  }
+  .copy:hover{border-color:var(--accent); color:var(--accent)}
+  .copy.done{border-color:var(--accent); color:var(--accent)}
   ul{padding-left:20px; margin:10px 0}
   li{margin:6px 0}
   li::marker{color:var(--accent)}
@@ -44,6 +54,7 @@
   .btn{
     display:inline-block; padding:9px 18px; border:1px solid var(--accent);
     color:var(--accent); font-size:13px; text-transform:uppercase; letter-spacing:.15em;
+    background:none; font-family:inherit; cursor:pointer;
   }
   .btn:hover{background:var(--accent); color:var(--accent-fg); border-bottom-color:var(--accent)}
   .btn.solid{background:var(--accent); color:var(--accent-fg)}
@@ -64,27 +75,28 @@
 
   <div class="btns">
     <a class="btn solid" href="https://github.com/FatherMarz/stash">GitHub →</a>
-    <a class="btn" href="https://github.com/FatherMarz/stash#readme">Readme</a>
+    <button class="btn" id="llmcopy" type="button">Copy for LLM</button>
   </div>
+  <p class="small">Copy for LLM puts setup instructions on your clipboard. Paste them to your agent and it installs stash for you.</p>
 
   <h2>Quick start</h2>
-<pre><code>go install github.com/FatherMarz/stash@latest
+  <div class="codewrap"><pre><code>go install github.com/FatherMarz/stash@latest
 
 stash serve                        <span class="c"># prints your admin token, once</span>
 export STASH_TOKEN=stash_...
 stash set OPENAI_API_KEY sk-...    <span class="c"># store a secret</span>
 stash get OPENAI_API_KEY           <span class="c"># read it back</span>
-stash run -- python agent.py       <span class="c"># run anything with all secrets as env vars</span></code></pre>
+stash run -- python agent.py       <span class="c"># run anything with all secrets as env vars</span></code></pre></div>
 
   <h2>Give each agent its own token</h2>
-<pre><code>stash token create my-agent --role ro
+  <div class="codewrap"><pre><code>stash token create my-agent --role ro
 stash token revoke my-agent
-stash audit                        <span class="c"># who read what, when</span></code></pre>
+stash audit                        <span class="c"># who read what, when</span></code></pre></div>
   <p class="small">Roles: <span class="a">ro</span> reads, <span class="a">rw</span> reads and writes, <span class="a">admin</span> manages everything, <span class="a">proxy</span> reads nothing — see below.</p>
 
   <h2>Proxy mode: the agent never sees the key</h2>
-<pre><code>stash route create openai --upstream https://api.openai.com --secret OPENAI_API_KEY
-stash token create my-agent --role proxy</code></pre>
+  <div class="codewrap"><pre><code>stash route create openai --upstream https://api.openai.com --secret OPENAI_API_KEY
+stash token create my-agent --role proxy</code></pre></div>
   <p class="small">Point the SDK at <span class="a">http://127.0.0.1:8555/proxy/openai/v1</span> with the proxy token as its API key. stash puts the real key on each request on the way out. A proxy token cannot read any secret.</p>
 
   <h2>Notes</h2>
@@ -97,9 +109,47 @@ stash token create my-agent --role proxy</code></pre>
   </ul>
 
   <footer>
-    <span>MIT</span>
+    <span>MIT · Open Source</span>
     <a href="https://modul4r.com/work">modul4r.com</a>
   </footer>
 </main>
+<script>
+  const LLM_TEXT = `Set up stash, a tiny open-source secrets store for AI agents (https://github.com/FatherMarz/stash), on this machine.
+
+1. Install it: go install github.com/FatherMarz/stash@latest
+   If Go is not installed, clone https://github.com/FatherMarz/stash and build with: CGO_ENABLED=0 go build -o stash .
+2. Start the server: stash serve
+   It listens on http://127.0.0.1:8555 and keeps data in ~/.stash/.
+3. The first start prints an admin token ONE time. Show it to your user and tell them to save it.
+4. Create a scoped token for yourself: STASH_TOKEN=<admin token> stash token create <your-name> --role rw
+   Roles: ro (read), rw (read/write), proxy (can only forward API calls, never reads secrets).
+5. To store a secret, do NOT ask the user to paste it into the chat. Tell them to run in their own terminal:
+   export STASH_TOKEN=<their token>; stash set NAME   (paste value, Enter, Ctrl-D)
+6. Read a secret into a shell variable, never print it: KEY=$(stash get NAME)
+7. Run any command with all secrets injected as env vars: stash run -- <command>
+8. Proxy mode, so you never touch the key: stash route create <name> --upstream <api base url> --secret <SECRET_NAME>, then call http://127.0.0.1:8555/proxy/<name>/... with a proxy-role token as the API key.
+9. Install the agent skill so future sessions know all of this: cp -r skill/stash ~/.claude/skills/stash (from the repo).
+
+Full skill file: https://github.com/FatherMarz/stash/blob/main/skill/stash/SKILL.md`;
+
+  function flash(btn, label){
+    const old = btn.textContent;
+    btn.textContent = label; btn.classList.add("done");
+    setTimeout(() => { btn.textContent = old; btn.classList.remove("done"); }, 1600);
+  }
+  document.getElementById("llmcopy").addEventListener("click", async (e) => {
+    await navigator.clipboard.writeText(LLM_TEXT);
+    flash(e.target, "Copied");
+  });
+  document.querySelectorAll(".codewrap").forEach((wrap) => {
+    const btn = document.createElement("button");
+    btn.className = "copy"; btn.type = "button"; btn.textContent = "copy";
+    btn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(wrap.querySelector("pre").innerText);
+      flash(btn, "copied");
+    });
+    wrap.appendChild(btn);
+  });
+</script>
 </body>
 </html>
