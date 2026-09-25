@@ -22,6 +22,7 @@ var metaPassword = []byte("owner-password")
 var (
 	ErrNoPassword    = errors.New("no owner password is set: run `stash password set` in a terminal")
 	ErrWrongPassword = errors.New("wrong owner password")
+	ErrNeedPassword  = errors.New("no owner password given")
 	ErrLocked        = errors.New("too many wrong passwords: reveals are locked for 15 minutes")
 )
 
@@ -124,6 +125,18 @@ const (
 )
 
 func (g *guard) check(st *Store, pw string) error {
+	// No password at all is not a guess. Agents hit this on every denied
+	// read, and it must not lock the owner out.
+	if pw == "" {
+		has, err := st.HasPassword()
+		if err != nil {
+			return err
+		}
+		if !has {
+			return ErrNoPassword
+		}
+		return ErrNeedPassword
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if time.Now().Before(g.locked) {

@@ -183,3 +183,23 @@ func TestPeerClientHelper(t *testing.T) {
 	}
 	fmt.Printf("status=%d\n", resp.StatusCode)
 }
+
+func TestMissingPasswordDoesNotLockOut(t *testing.T) {
+	e := newTestEnv(t)
+	rw := e.mustCreateToken(t, "agent", "rw")
+	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
+	for i := 0; i < guardMaxFails*3; i++ {
+		resp, body := e.req(t, rw, "GET", "/v1/secrets/K", nil)
+		if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "needs the owner password") {
+			t.Fatalf("try %d = %d %s", i, resp.StatusCode, body)
+		}
+	}
+	resp, _ := e.reqPW(t, rw, testPW, "GET", "/v1/secrets/K", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("owner after agent tries = %d, want 200", resp.StatusCode)
+	}
+	resp, body := e.reqPW(t, rw, "guess", "GET", "/v1/secrets/K", nil)
+	if !strings.Contains(string(body), "wrong owner password") {
+		t.Fatalf("wrong password = %d %s", resp.StatusCode, body)
+	}
+}

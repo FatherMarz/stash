@@ -11,6 +11,7 @@ stash password set                 # the owner password, typed at a terminal
 stash set OPENAI_API_KEY sk-...    # store a secret
 stash get OPENAI_API_KEY           # read it back (asks for the owner password)
 stash run -- python agent.py       # run anything with all secrets as env vars
+stash ui                           # browse, search, and edit on one screen
 ```
 
 ## Agents use secrets, they never see them

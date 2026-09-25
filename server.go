@@ -122,9 +122,12 @@ func (s *server) ownerPassword(w http.ResponseWriter, r *http.Request, tok *Toke
 	switch {
 	case err == nil, errors.Is(err, ErrNoPassword):
 		return true
-	case errors.Is(err, ErrWrongPassword):
+	case errors.Is(err, ErrNeedPassword):
 		s.st.Audit(tok.Name, "reveal-denied", secret)
 		writeErr(w, http.StatusForbidden, "reading a value needs the owner password. Agents: use `stash run` or a proxy route instead")
+	case errors.Is(err, ErrWrongPassword):
+		s.st.Audit(tok.Name, "wrong-password", secret)
+		writeErr(w, http.StatusForbidden, "wrong owner password")
 	case errors.Is(err, ErrLocked):
 		writeErr(w, http.StatusTooManyRequests, err.Error())
 	default:

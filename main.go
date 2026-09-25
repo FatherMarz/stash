@@ -29,6 +29,7 @@ Secrets (need STASH_TOKEN, and STASH_ADDR if not local):
   stash set NAME [VALUE]             VALUE from stdin when omitted
   stash get NAME                     print a value (asks for the owner password)
   stash list
+  stash ui                           browse, search, and edit secrets on one screen
   stash delete NAME
   stash run [--] COMMAND [ARGS...]   run a command with all secrets as env vars,
                                      secret values in its output show as ****
@@ -89,6 +90,8 @@ func main() {
 		err = cmdRun(rest)
 	case "password":
 		err = cmdPassword(rest)
+	case "ui":
+		err = cmdUI(rest)
 	case "open":
 		err = cmdOpen(rest, true)
 	case "close":
