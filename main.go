@@ -9,26 +9,32 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"golang.org/x/term"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 const usageText = `stash — a small secrets store for agents and scripts
 
 Server:
   stash serve [--addr 127.0.0.1:8555] [--data DIR] [--tls-cert F --tls-key F]
   stash reset-admin [--data DIR]     make a new admin token (offline recovery)
+  stash reset-password [--data DIR]  remove the owner password (offline recovery)
 
 Secrets (need STASH_TOKEN, and STASH_ADDR if not local):
   stash set NAME [VALUE]             VALUE from stdin when omitted
-  stash get NAME
+  stash get NAME                     print a value (asks for the owner password)
   stash list
   stash delete NAME
-  stash run [--] COMMAND [ARGS...]   run a command with all secrets as env vars
+  stash run [--] COMMAND [ARGS...]   run a command with all secrets as env vars,
+                                     secret values in its output show as ****
+
+Owner password (need an admin STASH_TOKEN and a terminal):
+  stash password set                 set or change the password that guards reads
 
 Tokens (need an admin STASH_TOKEN):
   stash token create NAME [--role proxy|ro|rw|admin]
@@ -77,6 +83,10 @@ func main() {
 		err = cmdDelete(rest)
 	case "run":
 		err = cmdRun(rest)
+	case "password":
+		err = cmdPassword(rest)
+	case "reset-password":
+		err = cmdResetPassword(rest)
 	case "token":
 		err = cmdToken(rest)
 	case "route":
@@ -173,11 +183,29 @@ func cmdSet(args []string) error {
 	return c.do("PUT", "/v1/secrets/"+name, map[string]string{"value": value}, nil)
 }
 
+// readPassword prompts on the terminal without echo. It refuses when stdin
+// is not a terminal, so a script or agent cannot pipe a password in.
+func readPassword(prompt string) (string, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return "", errors.New("this needs the owner password, typed at a terminal. Agents: use `stash run` or a proxy route instead")
+	}
+	fmt.Fprint(os.Stderr, prompt)
+	b, err := term.ReadPassword(fd)
+	fmt.Fprintln(os.Stderr)
+	return string(b), err
+}
+
 func cmdGet(args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: stash get NAME")
 	}
 	c := newClient()
+	pw, err := readPassword("owner password: ")
+	if err != nil {
+		return err
+	}
+	c.password = pw
 	var out struct {
 		Value string `json:"value"`
 	}
@@ -218,33 +246,54 @@ func envName(name string) string {
 	return envUnsafe.ReplaceAllString(strings.ToUpper(name), "_")
 }
 
-func cmdRun(args []string) error {
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
-	}
-	if len(args) == 0 {
-		return errors.New("usage: stash run [--] COMMAND [ARGS...]")
+func cmdPassword(args []string) error {
+	if len(args) != 1 || args[0] != "set" {
+		return errors.New("usage: stash password set")
 	}
 	c := newClient()
-	var secrets map[string]string
-	if err := c.do("GET", "/v1/env", nil, &secrets); err != nil {
+	var status struct {
+		Set bool `json:"set"`
+	}
+	if err := c.do("GET", "/v1/password", nil, &status); err != nil {
 		return err
 	}
-	env := os.Environ()
-	for name, value := range secrets {
-		env = append(env, envName(name)+"="+value)
+	var old string
+	if status.Set {
+		var err error
+		if old, err = readPassword("current owner password: "); err != nil {
+			return err
+		}
 	}
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Env = env
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		os.Exit(exitErr.ExitCode())
+	pw, err := readPassword("new owner password: ")
+	if err != nil {
+		return err
 	}
-	return err
+	again, err := readPassword("new owner password again: ")
+	if err != nil {
+		return err
+	}
+	if pw != again {
+		return errors.New("the two passwords do not match")
+	}
+	c.password = old
+	return c.do("PUT", "/v1/password", map[string]string{"password": pw}, nil)
+}
+
+func cmdResetPassword(args []string) error {
+	fs := flag.NewFlagSet("reset-password", flag.ExitOnError)
+	data := fs.String("data", defaultDataDir(), "data directory")
+	fs.Parse(args)
+
+	st, err := OpenStore(*data)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.ClearPassword(); err != nil {
+		return err
+	}
+	fmt.Println("owner password removed. Run `stash password set` to make a new one.")
+	return nil
 }
 
 func cmdToken(args []string) error {

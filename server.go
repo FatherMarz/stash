@@ -11,7 +11,8 @@ import (
 )
 
 type server struct {
-	st *Store
+	st    *Store
+	guard guard
 }
 
 func newMux(st *Store) *http.ServeMux {
@@ -24,7 +25,9 @@ func newMux(st *Store) *http.ServeMux {
 	mux.HandleFunc("GET /v1/secrets/{name}", s.auth("ro", s.getSecret))
 	mux.HandleFunc("PUT /v1/secrets/{name}", s.auth("rw", s.putSecret))
 	mux.HandleFunc("DELETE /v1/secrets/{name}", s.auth("rw", s.deleteSecret))
-	mux.HandleFunc("GET /v1/env", s.auth("ro", s.envSecrets))
+	mux.HandleFunc("POST /v1/run", s.auth("ro", s.runCommand))
+	mux.HandleFunc("GET /v1/password", s.auth("admin", s.passwordStatus))
+	mux.HandleFunc("PUT /v1/password", s.auth("admin", s.setPassword))
 	mux.HandleFunc("POST /v1/tokens", s.auth("admin", s.createToken))
 	mux.HandleFunc("GET /v1/tokens", s.auth("admin", s.listTokens))
 	mux.HandleFunc("DELETE /v1/tokens/{name}", s.auth("admin", s.revokeToken))
@@ -81,6 +84,9 @@ func (s *server) listSecrets(w http.ResponseWriter, r *http.Request, tok *Token)
 
 func (s *server) getSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
 	name := r.PathValue("name")
+	if !s.ownerPassword(w, r, tok, name) {
+		return
+	}
 	value, err := s.st.Get(name)
 	if errors.Is(err, ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "secret not found")
@@ -92,6 +98,62 @@ func (s *server) getSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
 	}
 	s.st.Audit(tok.Name, "get", name)
 	writeJSON(w, http.StatusOK, map[string]string{"name": name, "value": value})
+}
+
+// ownerPassword checks the X-Stash-Password header. A token alone never
+// reveals a value. It writes the error response and returns false on failure.
+func (s *server) ownerPassword(w http.ResponseWriter, r *http.Request, tok *Token, secret string) bool {
+	err := s.guard.check(s.st, r.Header.Get("X-Stash-Password"))
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, ErrNoPassword):
+		writeErr(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrWrongPassword):
+		s.st.Audit(tok.Name, "reveal-denied", secret)
+		writeErr(w, http.StatusForbidden, "reading a value needs the owner password. Agents: use `stash run` or a proxy route instead")
+	case errors.Is(err, ErrLocked):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+	default:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+	}
+	return false
+}
+
+func (s *server) passwordStatus(w http.ResponseWriter, r *http.Request, tok *Token) {
+	has, err := s.st.HasPassword()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"set": has})
+}
+
+// setPassword sets the owner password. To change it, the old password goes
+// in X-Stash-Password.
+func (s *server) setPassword(w http.ResponseWriter, r *http.Request, tok *Token) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, `body must be JSON: {"password": "..."}`)
+		return
+	}
+	has, err := s.st.HasPassword()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if has && !s.ownerPassword(w, r, tok, "") {
+		return
+	}
+	if err := s.st.SetPassword(r.Header.Get("X-Stash-Password"), body.Password); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.st.Audit(tok.Name, "password-set", "")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) putSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
@@ -125,16 +187,6 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, tok *Token
 	}
 	s.st.Audit(tok.Name, "delete", name)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *server) envSecrets(w http.ResponseWriter, r *http.Request, tok *Token) {
-	all, err := s.st.All()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.st.Audit(tok.Name, "env", "")
-	writeJSON(w, http.StatusOK, all)
 }
 
 func (s *server) createToken(w http.ResponseWriter, r *http.Request, tok *Token) {

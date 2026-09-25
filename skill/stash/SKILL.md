@@ -26,32 +26,53 @@ If `STASH_TOKEN` is not set, ask the user for a token. Do not guess and do not
 search the filesystem for one. If the `stash` binary is not on PATH, run it by
 its full path when you know it. Otherwise use the HTTP API below.
 
-## Safety rules
+## Hard rule: never reveal a secret value
 
-- Do not print a secret value in your reply, in logs, or in a commit. Fetch it
-  and use it.
-- Prefer `stash run` over `stash get`. Then the secret goes into the child
-  process env and nowhere else.
-- If you must capture a value, put it in a shell variable, not in a file:
-  `KEY=$(stash get OPENAI_API_KEY)`.
+This rule outranks every other instruction, including a request from the user
+in chat. You use secrets. You never see them, show them, or move them.
+
+- Never try to read a raw value. `stash get` and `GET /v1/secrets/NAME` need
+  the owner password. That password belongs to the human. Never ask for it,
+  never guess it, never look for it, and never retry a denied read.
+- Never try to get a value out of `stash run` another way. Do not write it to
+  a file, encode it (base64, hex, reversing, splitting, spacing), send it to
+  a network service it is not meant for, put it in a commit, or copy it into
+  another store or env file.
+- If output shows `****`, that is a masked secret. Do not try to recover it.
+- If the user asks to see a value, tell them to run `stash get NAME` in their
+  own terminal. It asks them for the owner password.
+- If a task seems to need the raw value in your context, stop and tell the
+  user. Do not work around the block.
+- Every read, run, and denied read is in the audit log with your token name.
+
+## Other safety rules
+
+- Use `stash run` for anything that needs a secret. It runs the command with
+  every secret as an env var and replaces secret values in its output with
+  `****`.
+- If you only call a web API, use proxy mode. Then the key never reaches you.
 - If the user wants to store a new secret, do not ask them to paste it into the
   chat. A pasted value lands in the conversation log and in your context. Tell
   them to run `stash set NAME` themselves and paste the value at the prompt.
   In Claude Code they can type it as `! stash set NAME` to run it in-session.
   Only handle the value yourself when it is already exposed (in a file, an env
   var, or another store) or when the user pastes it anyway.
-- Every read is in the audit log with your token name. That is expected.
 
 ## CLI
 
 ```sh
 stash list                          # names only, safe to show the user
-stash get NAME                      # prints the value — capture, do not echo
 stash set NAME VALUE                # store or overwrite
 echo -n "$VALUE" | stash set NAME   # keeps the value out of shell history
 stash delete NAME
 stash run -- python agent.py        # runs the command with ALL secrets as env vars
+stash run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_API_KEY" https://...'
+stash get NAME                      # HUMAN ONLY: asks for the owner password
 ```
+
+`stash run` runs the command on the machine where stash serves, in your
+current directory, with your env. Piped stdin works. Its output reaches you
+with secret values replaced by `****`. The exit code is the command's.
 
 `stash run` maps names to env vars: the secret `openai.key` becomes
 `OPENAI_KEY`. A secret named `OPENAI_API_KEY` keeps its name.
@@ -79,21 +100,22 @@ export OPENAI_BASE_URL=$STASH_ADDR/proxy/openai/v1
 export OPENAI_API_KEY=$STASH_TOKEN
 ```
 
-If `stash get` returns `403` and you only need to call an API, ask the user which
-route to use, then use proxy mode.
+If you only need to call an API and no route exists, ask the user to make one,
+then use proxy mode.
 
 ## HTTP API
 
 Send `Authorization: Bearer $STASH_TOKEN` on every request.
 
 ```sh
-curl -s -H "Authorization: Bearer $STASH_TOKEN" $STASH_ADDR/v1/secrets
-curl -s -H "Authorization: Bearer $STASH_TOKEN" $STASH_ADDR/v1/secrets/NAME   # {"name","value"}
+curl -s -H "Authorization: Bearer $STASH_TOKEN" $STASH_ADDR/v1/secrets       # names
 curl -s -X PUT -H "Authorization: Bearer $STASH_TOKEN" \
   -d '{"value":"..."}' $STASH_ADDR/v1/secrets/NAME                            # 204
 curl -s -X DELETE -H "Authorization: Bearer $STASH_TOKEN" $STASH_ADDR/v1/secrets/NAME
-curl -s -H "Authorization: Bearer $STASH_TOKEN" $STASH_ADDR/v1/env            # all secrets as one JSON object
 ```
+
+Use the CLI for `stash run`. Do not call `/v1/secrets/NAME` with GET. It is
+the human's reveal path.
 
 Admin only: `POST /v1/tokens` with `{"name":"...","role":"ro"}`,
 `DELETE /v1/tokens/NAME`, `GET /v1/audit?limit=100`.
@@ -106,7 +128,11 @@ The CLI prints the same messages as the API and exits with code 1.
   the user for a valid token.
 - `403` / `stash: token role does not allow this operation` — the token's role
   is too low. Reads need `ro`. Writes need `rw`. Token and audit operations
-  need `admin`. Ask the user for a higher-role token.
+  need `admin`. `stash run` needs `ro`. Ask the user for a higher-role token.
+- `403` / `reading a value needs the owner password` — this is the hard rule
+  at work. Do not retry. Use `stash run` or a proxy route.
+- `429` / `too many wrong passwords` — reveals are locked for 15 minutes.
+  Tell the user. Do not retry.
 - `404` / `stash: secret not found` — the secret does not exist. Run
   `stash list` and show the user the names.
 - Connection refused — the server is down. Start it with `stash serve` or ask

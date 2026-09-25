@@ -7,10 +7,25 @@ go install github.com/FatherMarz/stash@latest
 
 stash serve                        # prints your admin token, once
 export STASH_TOKEN=stash_...
+stash password set                 # the owner password, typed at a terminal
 stash set OPENAI_API_KEY sk-...    # store a secret
-stash get OPENAI_API_KEY           # read it back
+stash get OPENAI_API_KEY           # read it back (asks for the owner password)
 stash run -- python agent.py       # run anything with all secrets as env vars
 ```
+
+## Agents use secrets, they never see them
+
+A token can list names, write, run commands, and proxy. It cannot read a value.
+Reading a value needs the owner password, typed at a terminal. Agents do not
+have it. Five wrong tries lock reveals for 15 minutes.
+
+`stash run` runs the command inside the stash server, on the same machine, with
+your directory and env. Secret values in its output show as `****`. It only
+works from the machine where stash serves.
+
+An agent that sets out on purpose to leak a key it uses (write it to a file,
+encode it) can still do it. Proxy mode is the only full stop: the key never
+reaches the agent's process.
 
 ## Give each agent its own token
 
@@ -34,6 +49,7 @@ stash puts the real key on each request on the way out. A proxy token cannot rea
 
 ## Notes
 
+- Lost the owner password? Stop the server and run `stash reset-password`.
 - Secrets are AES-256-GCM encrypted in `~/.stash/stash.db`. The key is `~/.stash/stash.key`. Back up both. Keep them apart.
 - stash listens on `127.0.0.1` only. If you expose it, add `--tls-cert` and `--tls-key`.
 - `stash help` lists every command. Each command maps to an HTTP route under `/v1/`.

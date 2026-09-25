@@ -9,8 +9,11 @@ import (
 	"testing"
 )
 
+const testPW = "correct horse"
+
 type testEnv struct {
 	srv   *httptest.Server
+	st    *Store
 	admin string
 }
 
@@ -24,12 +27,21 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := st.SetPassword("", testPW); err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(newMux(st))
 	t.Cleanup(func() { srv.Close(); st.Close() })
-	return &testEnv{srv: srv, admin: admin}
+	return &testEnv{srv: srv, st: st, admin: admin}
 }
 
 func (e *testEnv) req(t *testing.T, token, method, path string, body any) (*http.Response, []byte) {
+	t.Helper()
+	return e.reqPW(t, token, "", method, path, body)
+}
+
+// reqPW sends the request with the owner password header.
+func (e *testEnv) reqPW(t *testing.T, token, pw, method, path string, body any) (*http.Response, []byte) {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
@@ -43,6 +55,9 @@ func (e *testEnv) req(t *testing.T, token, method, path string, body any) (*http
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if pw != "" {
+		req.Header.Set("X-Stash-Password", pw)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -96,7 +111,16 @@ func TestSecretCRUDOverHTTP(t *testing.T) {
 		t.Fatalf("put = %d %s", resp.StatusCode, body)
 	}
 
-	resp, body = e.req(t, rw, "GET", "/v1/secrets/API_KEY", nil)
+	resp, _ = e.req(t, rw, "GET", "/v1/secrets/API_KEY", nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("get without password = %d, want 403", resp.StatusCode)
+	}
+	resp, _ = e.req(t, e.admin, "GET", "/v1/secrets/API_KEY", nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("admin get without password = %d, want 403", resp.StatusCode)
+	}
+
+	resp, body = e.reqPW(t, rw, testPW, "GET", "/v1/secrets/API_KEY", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("get = %d", resp.StatusCode)
 	}
@@ -106,21 +130,16 @@ func TestSecretCRUDOverHTTP(t *testing.T) {
 		t.Fatalf("value = %q", got.Value)
 	}
 
-	resp, body = e.req(t, rw, "GET", "/v1/env", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("env = %d", resp.StatusCode)
-	}
-	var env map[string]string
-	json.Unmarshal(body, &env)
-	if env["API_KEY"] != "hunter2" {
-		t.Fatalf("env = %v", env)
+	resp, _ = e.req(t, rw, "GET", "/v1/env", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("env = %d, want 404 (route removed)", resp.StatusCode)
 	}
 
 	resp, _ = e.req(t, rw, "DELETE", "/v1/secrets/API_KEY", nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete = %d", resp.StatusCode)
 	}
-	resp, _ = e.req(t, rw, "GET", "/v1/secrets/API_KEY", nil)
+	resp, _ = e.reqPW(t, rw, testPW, "GET", "/v1/secrets/API_KEY", nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get after delete = %d, want 404", resp.StatusCode)
 	}
@@ -172,7 +191,7 @@ func TestAuditRecordsReads(t *testing.T) {
 	e := newTestEnv(t)
 	rw := e.mustCreateToken(t, "agent-rw", "rw")
 	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v"})
-	e.req(t, rw, "GET", "/v1/secrets/K", nil)
+	e.reqPW(t, rw, testPW, "GET", "/v1/secrets/K", nil)
 
 	resp, body := e.req(t, e.admin, "GET", "/v1/audit?limit=10", nil)
 	if resp.StatusCode != http.StatusOK {
@@ -253,9 +272,13 @@ func TestProxyInjectsRealKeyAndHidesIt(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("proxy token read secret = %d, want 403", resp.StatusCode)
 	}
-	resp, _ = e.req(t, px, "GET", "/v1/env", nil)
+	resp, _ = e.reqPW(t, px, testPW, "GET", "/v1/secrets/OPENAI", nil)
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("proxy token env = %d, want 403", resp.StatusCode)
+		t.Fatalf("proxy token read secret with password = %d, want 403", resp.StatusCode)
+	}
+	resp, _ = e.req(t, px, "POST", "/v1/run", runRequest{Argv: []string{"env"}})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("proxy token run = %d, want 403", resp.StatusCode)
 	}
 }
 

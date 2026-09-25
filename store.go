@@ -26,6 +26,7 @@ var (
 	bucketTokens  = []byte("tokens")
 	bucketAudit   = []byte("audit")
 	bucketRoutes  = []byte("routes")
+	bucketMeta    = []byte("meta")
 )
 
 var ErrNotFound = errors.New("not found")
@@ -84,7 +85,7 @@ func OpenStore(dir string) (*Store, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSecrets, bucketTokens, bucketAudit, bucketRoutes} {
+		for _, b := range [][]byte{bucketSecrets, bucketTokens, bucketAudit, bucketRoutes, bucketMeta} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
