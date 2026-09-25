@@ -71,6 +71,7 @@ stash delete NAME
 stash run -- python agent.py        # runs the command with ALL secrets as env vars
 stash run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_API_KEY" https://...'
 stash get NAME                      # HUMAN ONLY: asks for the owner password
+stash ui                            # HUMAN ONLY: the browse and edit screen
 ```
 
 `stash run` runs the command in your shell. Its output reaches you with

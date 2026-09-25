@@ -127,9 +127,14 @@
 
 stash serve                        <span class="c"># prints your admin token, once</span>
 export STASH_TOKEN=stash_...
+stash password set                 <span class="c"># the owner password, typed at a terminal</span>
 stash set OPENAI_API_KEY sk-...    <span class="c"># store a secret</span>
-stash get OPENAI_API_KEY           <span class="c"># read it back</span>
-stash run -- python agent.py       <span class="c"># run anything with all secrets as env vars</span></code></pre></div>
+stash get OPENAI_API_KEY           <span class="c"># read it back (asks for the owner password)</span>
+stash run -- python agent.py       <span class="c"># run anything with all secrets as env vars</span>
+stash ui                           <span class="c"># browse, search, and edit on one screen</span></code></pre></div>
+
+  <h2>Agents use secrets, they never see them</h2>
+  <p class="small">A token can list, write, run commands, and proxy. It cannot read a value. Reading a value needs the owner password, typed at a terminal. <span class="a">stash run</span> gives the command its secrets and prints each value in its output as <span class="a">****</span>. A script that must read one raw value needs <span class="a">stash open NAME</span>.</p>
 
   <h2>Give each agent its own token</h2>
   <div class="codewrap"><pre><code>stash token create my-agent --role ro
@@ -148,7 +153,7 @@ stash token create my-agent --role proxy</code></pre></div>
     <li>stash listens on <span class="a">127.0.0.1</span> only. If you expose it, add <span class="a">--tls-cert</span> and <span class="a">--tls-key</span>.</li>
     <li><span class="a">stash help</span> lists every command. Each command maps to an HTTP route under <span class="a">/v1/</span>.</li>
     <li>An agent skill ships in the repo. It teaches Claude Code (or any agent) how to use stash.</li>
-    <li>No UI, no rotation, no clustering. If you need those, use Infisical or OpenBao.</li>
+    <li>No web UI, no rotation, no clustering. If you need those, use Infisical or OpenBao.</li>
   </ul>
 
   <footer>
@@ -168,8 +173,10 @@ stash token create my-agent --role proxy</code></pre></div>
    Roles: ro (read), rw (read/write), proxy (can only forward API calls, never reads secrets).
 5. To store a secret, do NOT ask the user to paste it into the chat. Tell them to run in their own terminal:
    export STASH_TOKEN=<their token>; stash set NAME   (paste value, Enter, Ctrl-D)
-6. Read a secret into a shell variable, never print it: KEY=$(stash get NAME)
+6. Tell your user to set the owner password in their own terminal: STASH_TOKEN=<admin token> stash password set
+   After that you cannot read a raw value, and you must never ask for that password.
 7. Run any command with all secrets injected as env vars: stash run -- <command>
+   Secret values in its output show as ****.
 8. Proxy mode, so you never touch the key: stash route create <name> --upstream <api base url> --secret <SECRET_NAME>, then call http://127.0.0.1:8555/proxy/<name>/... with a proxy-role token as the API key.
 9. Install the agent skill so future sessions know all of this: cp -r skill/stash ~/.claude/skills/stash (from the repo).
 

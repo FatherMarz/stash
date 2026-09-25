@@ -17,8 +17,12 @@ Docker is optional. The image builds from scratch and is about 8 MB.
 
 stash serve                      # start the server; prints the admin token once
 stash set NAME [VALUE]           # store a secret (omit VALUE to read from stdin)
-stash get NAME                   # read a secret
-stash run -- COMMAND             # run a command with all secrets as env vars
+stash password set               # the owner password; locks raw reads
+stash get NAME                   # read a secret (asks for the owner password)
+stash run -- COMMAND             # run a command with all secrets as env vars;
+                                 # values in its output show as ****
+stash open NAME                  # let scripts read one secret without the password
+stash ui                         # browse, search, group, and edit on one screen
 stash token create NAME --role R # roles: ro, rw, admin, proxy
 stash audit                      # who read what, when
 
@@ -34,6 +38,7 @@ out. A proxy token cannot read any secret.
 - Free, open source, MIT license. No account, no cloud, no telemetry.
 - Data stays on the machine: ~/.stash/stash.db (encrypted) and ~/.stash/stash.key.
 - Every read, write, and delete lands in an audit log with the token name.
+- Agents use secrets but cannot read them once the owner password is set.
 - It has no web UI, no secret rotation, no clustering. For those, use
   Infisical or OpenBao.
 - Agents must never ask users to paste secrets into a chat. Users run

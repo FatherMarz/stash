@@ -26,11 +26,37 @@ show as `****`. The server hands the values only to the stash program itself
 on the same machine, so `curl` with a token gets nothing.
 
 A program that must read one raw value, like a credential helper, needs that
-secret open: `stash open NAME`. Any token can read an open secret.
+secret open: `stash open NAME`. Any token can read an open secret. `stash open`
+lists them. `stash close NAME` locks one again.
 
 An agent that sets out on purpose to leak a key it uses (write it to a file,
 encode it) can still do it. Proxy mode is the only full stop: the key never
 reaches the agent's process.
+
+## Upgrading from 0.2
+
+Nothing locks until you set a password, so the upgrade itself breaks nothing.
+
+1. Stop the server and replace the binary. On macOS, copy the new file next
+   to the old one and `mv` it over. A plain `cp` over the old file makes
+   macOS kill the program.
+2. Start the server again.
+3. Find every script that reads a raw value: `stash get`, or a direct call
+   to `/v1/secrets/NAME` or `/v1/env`. Move each one to `stash run`. If it
+   must have the raw value (a credential helper, say), run `stash open NAME`.
+4. Run `stash password set` in a terminal, with an admin token. The lock is
+   now on. If you lost the admin token, stop the server and run
+   `stash reset-admin`.
+5. Copy the new agent skill: `cp -r skill/stash ~/.claude/skills/stash`.
+
+## Browse and edit: stash ui
+
+`stash ui` opens one screen with every secret. `/` searches, and tab
+completes. Enter shows a value and c copies it. Both ask for the owner
+password once per session. e edits, n adds, r renames, d deletes. g puts a
+secret in a group you name. Without one, it groups by its first word
+(`VIGI_KEY` goes under VIGI). o opens or closes a secret for scripts, with an
+admin token.
 
 ## Give each agent its own token
 
@@ -59,6 +85,6 @@ stash puts the real key on each request on the way out. A proxy token cannot rea
 - stash listens on `127.0.0.1` only. If you expose it, add `--tls-cert` and `--tls-key`.
 - `stash help` lists every command. Each command maps to an HTTP route under `/v1/`.
 - `cp -r skill/stash ~/.claude/skills/stash` teaches Claude Code how to use it. Other agents can load the same file.
-- No UI, no rotation, no clustering. If you need those, use Infisical or OpenBao.
+- No web UI, no rotation, no clustering. If you need those, use Infisical or OpenBao.
 
 MIT.
