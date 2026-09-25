@@ -15,11 +15,12 @@ import (
 )
 
 // stash ui is a terminal screen for a person to browse, search, and edit
-// secrets. Names group by their first word (VIGI_KEY and vigi-token both go
-// under VIGI). Seeing or copying a value asks for the owner password once
-// per session.
+// secrets. A secret sits in the group the owner gave it with g. Without
+// one, it groups by its first word (VIGI_KEY and vigi-token both go under
+// VIGI). Seeing or copying a value asks for the owner password once per
+// session.
 
-const uiHelp = "↑↓ move  / search  enter show  c copy  e edit  n new  r rename  d delete  o open/close  q quit"
+const uiHelp = "↑↓ move  / search  tab complete  enter show  c copy  e edit  n new  r rename  g group  d delete  o open/close  q quit"
 
 type uiMode int
 
@@ -40,6 +41,8 @@ type uiModel struct {
 	c        *client
 	names    []string
 	open     map[string]bool
+	groups   map[string]string // custom group per secret
+	complete []string          // tab completions for the current input
 	shown    map[string]string
 	rows     []uiRow
 	cursor   int // index into rows, always on a name row
@@ -70,7 +73,7 @@ func cmdUI(args []string) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("stash ui needs a terminal")
 	}
-	m := &uiModel{c: newClient(), open: map[string]bool{}, shown: map[string]string{}, height: 24, width: 80}
+	m := &uiModel{c: newClient(), open: map[string]bool{}, groups: map[string]string{}, shown: map[string]string{}, height: 24, width: 80}
 	m.search = textinput.New()
 	m.search.Prompt = "/ "
 	m.input = textinput.New()
@@ -94,7 +97,14 @@ func (m *uiModel) reload() error {
 	if err := m.c.do("GET", "/v1/open", nil, &open); err != nil {
 		return err
 	}
+	var groups struct {
+		Groups map[string]string `json:"groups"`
+	}
+	if err := m.c.do("GET", "/v1/groups", nil, &groups); err != nil {
+		return err
+	}
 	m.names = list.Secrets
+	m.groups = groups.Groups
 	m.open = map[string]bool{}
 	for _, n := range open.Open {
 		m.open[n] = true
@@ -111,22 +121,37 @@ func groupOf(name string) string {
 	return strings.ToUpper(name)
 }
 
-// groupRows sorts names into groups. A group with one name goes to OTHER.
-func groupRows(names []string) []uiRow {
-	byGroup := map[string][]string{}
+// groupRows sorts names into groups. A custom group wins. Otherwise a name
+// goes under its first word, and a first word with one name goes to OTHER.
+// Groups match without regard to case.
+func groupRows(names []string, custom map[string]string) []uiRow {
+	byKey := map[string][]string{}
+	label := map[string]string{}
+	isCustom := map[string]bool{}
 	for _, n := range names {
-		byGroup[groupOf(n)] = append(byGroup[groupOf(n)], n)
+		g, ok := custom[n]
+		if !ok || g == "" {
+			g = groupOf(n)
+		}
+		k := strings.ToUpper(g)
+		byKey[k] = append(byKey[k], n)
+		if ok && custom[n] != "" {
+			isCustom[k] = true
+			label[k] = g
+		} else if _, seen := label[k]; !seen {
+			label[k] = g
+		}
 	}
-	var groups []string
+	var keys []string
 	var other []string
-	for g, ns := range byGroup {
-		if len(ns) == 1 {
+	for k, ns := range byKey {
+		if len(ns) == 1 && !isCustom[k] {
 			other = append(other, ns[0])
 			continue
 		}
-		groups = append(groups, g)
+		keys = append(keys, k)
 	}
-	sort.Strings(groups)
+	sort.Strings(keys)
 	var rows []uiRow
 	add := func(header string, ns []string) {
 		sort.Slice(ns, func(i, j int) bool { return strings.ToLower(ns[i]) < strings.ToLower(ns[j]) })
@@ -135,13 +160,68 @@ func groupRows(names []string) []uiRow {
 			rows = append(rows, uiRow{name: n})
 		}
 	}
-	for _, g := range groups {
-		add(g, byGroup[g])
+	for _, k := range keys {
+		add(label[k], byKey[k])
 	}
 	if len(other) > 0 {
 		add("OTHER", other)
 	}
 	return rows
+}
+
+// completeText extends text to the longest start shared by every candidate
+// that begins with it, ignoring case. If no candidate begins with it,
+// candidates that contain it count instead.
+func completeText(text string, candidates []string) string {
+	if text == "" {
+		return text
+	}
+	lower := strings.ToLower(text)
+	var matches []string
+	for _, c := range candidates {
+		if strings.HasPrefix(strings.ToLower(c), lower) {
+			matches = append(matches, c)
+		}
+	}
+	if len(matches) == 0 {
+		for _, c := range candidates {
+			if strings.Contains(strings.ToLower(c), lower) {
+				matches = append(matches, c)
+			}
+		}
+	}
+	if len(matches) == 0 {
+		return text
+	}
+	common := matches[0]
+	for _, c := range matches[1:] {
+		i := 0
+		for i < len(common) && i < len(c) && strings.EqualFold(common[i:i+1], c[i:i+1]) {
+			i++
+		}
+		common = common[:i]
+	}
+	if len(common) > len(text) {
+		return common
+	}
+	return text
+}
+
+// groupNames lists every group on screen, for tab completion.
+func (m *uiModel) groupNames() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range groupRows(m.names, m.groups) {
+		if r.header == "" {
+			continue
+		}
+		g := r.header[:strings.LastIndex(r.header, " (")]
+		if g != "OTHER" && !seen[g] {
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func (m *uiModel) rebuild() {
@@ -153,7 +233,7 @@ func (m *uiModel) rebuild() {
 			names = append(names, n)
 		}
 	}
-	m.rows = groupRows(names)
+	m.rows = groupRows(names, m.groups)
 	m.cursor = -1
 	for i, r := range m.rows {
 		if r.name != "" && (m.cursor < 0 || r.name == current) {
@@ -259,6 +339,7 @@ func (m *uiModel) ask(prompt, initial string, secret bool, then func(m *uiModel,
 	}
 	m.input.Focus()
 	m.onInput = then
+	m.complete = nil
 }
 
 func (m *uiModel) confirm(prompt string, then func(m *uiModel)) {
@@ -326,6 +407,11 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *uiModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
+	case tea.KeyTab:
+		m.search.SetValue(completeText(m.search.Value(), m.names))
+		m.search.CursorEnd()
+		m.rebuild()
+		return m, nil
 	case tea.KeyEnter:
 		m.mode = modeBrowse
 		m.search.Blur()
@@ -349,6 +435,12 @@ func (m *uiModel) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeBrowse
 		m.input.Blur()
 		m.say("cancelled")
+		return m, nil
+	case tea.KeyTab:
+		if m.complete != nil {
+			m.input.SetValue(completeText(m.input.Value(), m.complete))
+			m.input.CursorEnd()
+		}
 		return m, nil
 	case tea.KeyEnter:
 		text := m.input.Value()
@@ -464,6 +556,12 @@ func (m *uiModel) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.fail(err)
 					return
 				}
+				if g := m.groups[name]; g != "" {
+					if err := m.c.do("PUT", "/v1/groups/"+newName, map[string]string{"group": g}, nil); err != nil {
+						m.fail(err)
+						return
+					}
+				}
 				if err := m.c.do("DELETE", "/v1/secrets/"+name, nil, nil); err != nil {
 					m.fail(err)
 					return
@@ -477,6 +575,20 @@ func (m *uiModel) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.jumpTo(newName)
 			})
 		})
+	case "g":
+		m.ask("group for "+name+" (tab completes, empty clears): ", m.groups[name], false, func(m *uiModel, group string) {
+			if err := m.c.do("PUT", "/v1/groups/"+name, map[string]string{"group": group}, nil); err != nil {
+				m.fail(err)
+				return
+			}
+			if strings.TrimSpace(group) == "" {
+				m.after("%s back in its first-word group", name)
+			} else {
+				m.after("moved %s to %s", name, strings.TrimSpace(group))
+			}
+			m.jumpTo(name)
+		})
+		m.complete = m.groupNames()
 	case "d":
 		m.confirm(fmt.Sprintf("delete %s? y/n", name), func(m *uiModel) {
 			if err := m.c.do("DELETE", "/v1/secrets/"+name, nil, nil); err != nil {

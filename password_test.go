@@ -203,3 +203,26 @@ func TestMissingPasswordDoesNotLockOut(t *testing.T) {
 		t.Fatalf("wrong password = %d %s", resp.StatusCode, body)
 	}
 }
+
+func TestGroupsFollowSecrets(t *testing.T) {
+	e := newTestEnv(t)
+	rw := e.mustCreateToken(t, "agent", "rw")
+	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
+	resp, _ := e.req(t, rw, "PUT", "/v1/groups/K", map[string]string{"group": "Client work"})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set group = %d", resp.StatusCode)
+	}
+	resp, body := e.req(t, rw, "GET", "/v1/groups", nil)
+	if !strings.Contains(string(body), `"K":"Client work"`) {
+		t.Fatalf("groups = %s", body)
+	}
+	resp, _ = e.req(t, rw, "PUT", "/v1/groups/NOPE", map[string]string{"group": "x"})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("group for missing secret = %d, want 404", resp.StatusCode)
+	}
+	e.req(t, rw, "DELETE", "/v1/secrets/K", nil)
+	_, body = e.req(t, rw, "GET", "/v1/groups", nil)
+	if strings.Contains(string(body), "Client work") {
+		t.Fatalf("group outlived its secret: %s", body)
+	}
+}

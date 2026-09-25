@@ -32,6 +32,8 @@ func newMux(st *Store) *http.ServeMux {
 	mux.HandleFunc("PUT /v1/secrets/{name}", s.auth("rw", s.putSecret))
 	mux.HandleFunc("DELETE /v1/secrets/{name}", s.auth("rw", s.deleteSecret))
 	mux.HandleFunc("GET /v1/env", s.auth("ro", s.envSecrets))
+	mux.HandleFunc("GET /v1/groups", s.auth("ro", s.listGroups))
+	mux.HandleFunc("PUT /v1/groups/{name}", s.auth("rw", s.setGroup))
 	mux.HandleFunc("GET /v1/open", s.auth("ro", s.listOpen))
 	mux.HandleFunc("PUT /v1/open/{name}", s.auth("admin", s.setOpen(true)))
 	mux.HandleFunc("DELETE /v1/open/{name}", s.auth("admin", s.setOpen(false)))
@@ -220,6 +222,38 @@ func (s *server) envSecrets(w http.ResponseWriter, r *http.Request, tok *Token) 
 	}
 	s.st.Audit(tok.Name, "env", "")
 	writeJSON(w, http.StatusOK, all)
+}
+
+func (s *server) listGroups(w http.ResponseWriter, r *http.Request, tok *Token) {
+	groups, err := s.st.Groups()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]map[string]string{"groups": groups})
+}
+
+func (s *server) setGroup(w http.ResponseWriter, r *http.Request, tok *Token) {
+	name := r.PathValue("name")
+	var body struct {
+		Group string `json:"group"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, `body must be JSON: {"group": "..."}`)
+		return
+	}
+	err := s.st.SetGroup(name, body.Group)
+	if errors.Is(err, ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "secret not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.st.Audit(tok.Name, "group", name)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) listOpen(w http.ResponseWriter, r *http.Request, tok *Token) {

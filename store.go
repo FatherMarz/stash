@@ -28,6 +28,7 @@ var (
 	bucketRoutes  = []byte("routes")
 	bucketMeta    = []byte("meta")
 	bucketOpen    = []byte("open")
+	bucketGroups  = []byte("groups")
 )
 
 var ErrNotFound = errors.New("not found")
@@ -86,7 +87,7 @@ func OpenStore(dir string) (*Store, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSecrets, bucketTokens, bucketAudit, bucketRoutes, bucketMeta, bucketOpen} {
+		for _, b := range [][]byte{bucketSecrets, bucketTokens, bucketAudit, bucketRoutes, bucketMeta, bucketOpen, bucketGroups} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -232,8 +233,43 @@ func (s *Store) Delete(name string) error {
 		if b.Get([]byte(name)) == nil {
 			return ErrNotFound
 		}
+		tx.Bucket(bucketGroups).Delete([]byte(name))
+		tx.Bucket(bucketOpen).Delete([]byte(name))
 		return b.Delete([]byte(name))
 	})
+}
+
+// SetGroup files a secret under a group the owner picked. An empty group
+// removes it, and the secret falls back to grouping by its first word.
+func (s *Store) SetGroup(name, group string) error {
+	if err := validName(name); err != nil {
+		return err
+	}
+	group = strings.TrimSpace(group)
+	if len(group) > 100 {
+		return errors.New("the group name must be at most 100 characters")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		if tx.Bucket(bucketSecrets).Get([]byte(name)) == nil {
+			return ErrNotFound
+		}
+		b := tx.Bucket(bucketGroups)
+		if group == "" {
+			return b.Delete([]byte(name))
+		}
+		return b.Put([]byte(name), []byte(group))
+	})
+}
+
+func (s *Store) Groups() (map[string]string, error) {
+	out := map[string]string{}
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketGroups).ForEach(func(k, v []byte) error {
+			out[string(k)] = string(v)
+			return nil
+		})
+	})
+	return out, err
 }
 
 func hashToken(plain string) []byte {
