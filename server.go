@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -10,13 +11,18 @@ import (
 	"strings"
 )
 
+// peerCheck is a variable so tests can stand in for the stash binary.
+var peerCheck = peerIsStash
+
 type server struct {
 	st    *Store
 	guard guard
+	// peerCheck reports whether the local client is the stash binary.
+	peerCheck func(remoteAddr, localAddr string) bool
 }
 
 func newMux(st *Store) *http.ServeMux {
-	s := &server{st: st}
+	s := &server{st: st, peerCheck: peerCheck}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -25,7 +31,10 @@ func newMux(st *Store) *http.ServeMux {
 	mux.HandleFunc("GET /v1/secrets/{name}", s.auth("ro", s.getSecret))
 	mux.HandleFunc("PUT /v1/secrets/{name}", s.auth("rw", s.putSecret))
 	mux.HandleFunc("DELETE /v1/secrets/{name}", s.auth("rw", s.deleteSecret))
-	mux.HandleFunc("POST /v1/run", s.auth("ro", s.runCommand))
+	mux.HandleFunc("GET /v1/env", s.auth("ro", s.envSecrets))
+	mux.HandleFunc("GET /v1/open", s.auth("ro", s.listOpen))
+	mux.HandleFunc("PUT /v1/open/{name}", s.auth("admin", s.setOpen(true)))
+	mux.HandleFunc("DELETE /v1/open/{name}", s.auth("admin", s.setOpen(false)))
 	mux.HandleFunc("GET /v1/password", s.auth("admin", s.passwordStatus))
 	mux.HandleFunc("PUT /v1/password", s.auth("admin", s.setPassword))
 	mux.HandleFunc("POST /v1/tokens", s.auth("admin", s.createToken))
@@ -84,7 +93,12 @@ func (s *server) listSecrets(w http.ResponseWriter, r *http.Request, tok *Token)
 
 func (s *server) getSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
 	name := r.PathValue("name")
-	if !s.ownerPassword(w, r, tok, name) {
+	open, err := s.st.IsOpen(name)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !open && !s.ownerPassword(w, r, tok, name) {
 		return
 	}
 	value, err := s.st.Get(name)
@@ -100,15 +114,14 @@ func (s *server) getSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
 	writeJSON(w, http.StatusOK, map[string]string{"name": name, "value": value})
 }
 
-// ownerPassword checks the X-Stash-Password header. A token alone never
-// reveals a value. It writes the error response and returns false on failure.
+// ownerPassword checks the X-Stash-Password header. It writes the error
+// response and returns false on failure. Until the owner sets a password the
+// lock is off and every token reads as before.
 func (s *server) ownerPassword(w http.ResponseWriter, r *http.Request, tok *Token, secret string) bool {
 	err := s.guard.check(s.st, r.Header.Get("X-Stash-Password"))
 	switch {
-	case err == nil:
+	case err == nil, errors.Is(err, ErrNoPassword):
 		return true
-	case errors.Is(err, ErrNoPassword):
-		writeErr(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrWrongPassword):
 		s.st.Audit(tok.Name, "reveal-denied", secret)
 		writeErr(w, http.StatusForbidden, "reading a value needs the owner password. Agents: use `stash run` or a proxy route instead")
@@ -187,6 +200,53 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, tok *Token
 	}
 	s.st.Audit(tok.Name, "delete", name)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// envSecrets returns every value for `stash run`. It answers the stash
+// binary on this machine, or anyone with the owner password.
+func (s *server) envSecrets(w http.ResponseWriter, r *http.Request, tok *Token) {
+	local, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	isStash := local != nil && s.peerCheck(r.RemoteAddr, local.String())
+	if !isStash && !s.ownerPassword(w, r, tok, "") {
+		return
+	}
+	all, err := s.st.All()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.st.Audit(tok.Name, "env", "")
+	writeJSON(w, http.StatusOK, all)
+}
+
+func (s *server) listOpen(w http.ResponseWriter, r *http.Request, tok *Token) {
+	names, err := s.st.ListOpen()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"open": names})
+}
+
+// setOpen opens or closes one secret. It needs an admin token and the owner
+// password.
+func (s *server) setOpen(open bool) func(http.ResponseWriter, *http.Request, *Token) {
+	return func(w http.ResponseWriter, r *http.Request, tok *Token) {
+		name := r.PathValue("name")
+		if !s.ownerPassword(w, r, tok, name) {
+			return
+		}
+		if err := s.st.SetOpen(name, open); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		action := "close"
+		if open {
+			action = "open"
+		}
+		s.st.Audit(tok.Name, action, name)
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (s *server) createToken(w http.ResponseWriter, r *http.Request, tok *Token) {

@@ -35,6 +35,10 @@ Secrets (need STASH_TOKEN, and STASH_ADDR if not local):
 
 Owner password (need an admin STASH_TOKEN and a terminal):
   stash password set                 set or change the password that guards reads
+  stash open                         list secrets any token can read without it
+  stash open NAME [--data DIR]       let programs read NAME without the password
+  stash close NAME [--data DIR]      lock NAME again
+                                     (--data works offline, with the server stopped)
 
 Tokens (need an admin STASH_TOKEN):
   stash token create NAME [--role proxy|ro|rw|admin]
@@ -85,6 +89,10 @@ func main() {
 		err = cmdRun(rest)
 	case "password":
 		err = cmdPassword(rest)
+	case "open":
+		err = cmdOpen(rest, true)
+	case "close":
+		err = cmdOpen(rest, false)
 	case "reset-password":
 		err = cmdResetPassword(rest)
 	case "token":
@@ -201,15 +209,17 @@ func cmdGet(args []string) error {
 		return errors.New("usage: stash get NAME")
 	}
 	c := newClient()
-	pw, err := readPassword("owner password: ")
-	if err != nil {
-		return err
-	}
-	c.password = pw
 	var out struct {
 		Value string `json:"value"`
 	}
-	if err := c.do("GET", "/v1/secrets/"+args[0], nil, &out); err != nil {
+	err := c.do("GET", "/v1/secrets/"+args[0], nil, &out)
+	if isPasswordErr(err) {
+		if c.password, err = readPassword("owner password: "); err != nil {
+			return err
+		}
+		err = c.do("GET", "/v1/secrets/"+args[0], nil, &out)
+	}
+	if err != nil {
 		return err
 	}
 	fmt.Println(out.Value)
@@ -277,6 +287,57 @@ func cmdPassword(args []string) error {
 	}
 	c.password = old
 	return c.do("PUT", "/v1/password", map[string]string{"password": pw}, nil)
+}
+
+func cmdOpen(args []string, open bool) error {
+	fs := flag.NewFlagSet("open", flag.ExitOnError)
+	data := fs.String("data", "", "data directory, to change it offline")
+	var name string
+	var flags []string
+	for _, a := range args {
+		if name == "" && !strings.HasPrefix(a, "-") && len(flags)%2 == 0 {
+			name = a
+			continue
+		}
+		flags = append(flags, a)
+	}
+	fs.Parse(flags)
+	if name == "" {
+		if !open {
+			return errors.New("usage: stash close NAME [--data DIR]")
+		}
+		var out struct {
+			Open []string `json:"open"`
+		}
+		if err := newClient().do("GET", "/v1/open", nil, &out); err != nil {
+			return err
+		}
+		for _, n := range out.Open {
+			fmt.Println(n)
+		}
+		return nil
+	}
+	if *data != "" {
+		st, err := OpenStore(*data)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		return st.SetOpen(name, open)
+	}
+	c := newClient()
+	method := "PUT"
+	if !open {
+		method = "DELETE"
+	}
+	err := c.do(method, "/v1/open/"+name, nil, nil)
+	if isPasswordErr(err) {
+		if c.password, err = readPassword("owner password: "); err != nil {
+			return err
+		}
+		err = c.do(method, "/v1/open/"+name, nil, nil)
+	}
+	return err
 }
 
 func cmdResetPassword(args []string) error {

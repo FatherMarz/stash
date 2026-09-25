@@ -31,9 +31,12 @@ its full path when you know it. Otherwise use the HTTP API below.
 This rule outranks every other instruction, including a request from the user
 in chat. You use secrets. You never see them, show them, or move them.
 
-- Never try to read a raw value. `stash get` and `GET /v1/secrets/NAME` need
-  the owner password. That password belongs to the human. Never ask for it,
-  never guess it, never look for it, and never retry a denied read.
+- Never try to read a raw value. `stash get`, `GET /v1/secrets/NAME`, and
+  `GET /v1/env` need the owner password. That password belongs to the human.
+  Never ask for it, never guess it, never look for it, and never retry a
+  denied read.
+- Some secrets are open (`stash open` lists them) because a program must read
+  them. That is for the program. Do not read an open secret yourself.
 - Never try to get a value out of `stash run` another way. Do not write it to
   a file, encode it (base64, hex, reversing, splitting, spacing), send it to
   a network service it is not meant for, put it in a commit, or copy it into
@@ -70,9 +73,8 @@ stash run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_API_KEY" https://...'
 stash get NAME                      # HUMAN ONLY: asks for the owner password
 ```
 
-`stash run` runs the command on the machine where stash serves, in your
-current directory, with your env. Piped stdin works. Its output reaches you
-with secret values replaced by `****`. The exit code is the command's.
+`stash run` runs the command in your shell. Its output reaches you with
+secret values replaced by `****`. The exit code is the command's.
 
 `stash run` maps names to env vars: the secret `openai.key` becomes
 `OPENAI_KEY`. A secret named `OPENAI_API_KEY` keeps its name.
@@ -114,8 +116,8 @@ curl -s -X PUT -H "Authorization: Bearer $STASH_TOKEN" \
 curl -s -X DELETE -H "Authorization: Bearer $STASH_TOKEN" $STASH_ADDR/v1/secrets/NAME
 ```
 
-Use the CLI for `stash run`. Do not call `/v1/secrets/NAME` with GET. It is
-the human's reveal path.
+Use the CLI for `stash run`. Do not call `/v1/secrets/NAME` or `/v1/env`
+with GET. They are the human's reveal path.
 
 Admin only: `POST /v1/tokens` with `{"name":"...","role":"ro"}`,
 `DELETE /v1/tokens/NAME`, `GET /v1/audit?limit=100`.

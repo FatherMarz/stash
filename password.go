@@ -143,3 +143,39 @@ func (g *guard) check(st *Store, pw string) error {
 	}
 	return err
 }
+
+// An open secret skips the owner password. It is for programs that must
+// read one raw value, like a credential helper. Any token can read it.
+
+func (s *Store) SetOpen(name string, open bool) error {
+	if err := validName(name); err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketOpen)
+		if open {
+			return b.Put([]byte(name), []byte{1})
+		}
+		return b.Delete([]byte(name))
+	})
+}
+
+func (s *Store) IsOpen(name string) (bool, error) {
+	var open bool
+	err := s.db.View(func(tx *bolt.Tx) error {
+		open = tx.Bucket(bucketOpen).Get([]byte(name)) != nil
+		return nil
+	})
+	return open, err
+}
+
+func (s *Store) ListOpen() ([]string, error) {
+	out := []string{}
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketOpen).ForEach(func(k, _ []byte) error {
+			out = append(out, string(k))
+			return nil
+		})
+	})
+	return out, err
+}

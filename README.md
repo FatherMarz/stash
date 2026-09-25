@@ -15,13 +15,17 @@ stash run -- python agent.py       # run anything with all secrets as env vars
 
 ## Agents use secrets, they never see them
 
-A token can list names, write, run commands, and proxy. It cannot read a value.
-Reading a value needs the owner password, typed at a terminal. Agents do not
-have it. Five wrong tries lock reveals for 15 minutes.
+Once you run `stash password set`, a token can list names, write, run
+commands, and proxy, but it cannot read a value. Reading a value needs the
+owner password, typed at a terminal. Agents do not have it. Five wrong tries
+lock reveals for 15 minutes. Until you set a password, stash reads as before.
 
-`stash run` runs the command inside the stash server, on the same machine, with
-your directory and env. Secret values in its output show as `****`. It only
-works from the machine where stash serves.
+`stash run` works as before, in your own shell. Secret values in its output
+show as `****`. The server hands the values only to the stash program itself
+on the same machine, so `curl` with a token gets nothing.
+
+A program that must read one raw value, like a credential helper, needs that
+secret open: `stash open NAME`. Any token can read an open secret.
 
 An agent that sets out on purpose to leak a key it uses (write it to a file,
 encode it) can still do it. Proxy mode is the only full stop: the key never

@@ -131,8 +131,8 @@ func TestSecretCRUDOverHTTP(t *testing.T) {
 	}
 
 	resp, _ = e.req(t, rw, "GET", "/v1/env", nil)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("env = %d, want 404 (route removed)", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("env from curl = %d, want 403", resp.StatusCode)
 	}
 
 	resp, _ = e.req(t, rw, "DELETE", "/v1/secrets/API_KEY", nil)
@@ -276,9 +276,9 @@ func TestProxyInjectsRealKeyAndHidesIt(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("proxy token read secret with password = %d, want 403", resp.StatusCode)
 	}
-	resp, _ = e.req(t, px, "POST", "/v1/run", runRequest{Argv: []string{"env"}})
+	resp, _ = e.reqPW(t, px, testPW, "GET", "/v1/env", nil)
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("proxy token run = %d, want 403", resp.StatusCode)
+		t.Fatalf("proxy token env = %d, want 403", resp.StatusCode)
 	}
 }
 
