@@ -34,7 +34,7 @@
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
       "license": "https://github.com/FatherMarz/stash/blob/main/LICENSE",
       "downloadUrl": "https://github.com/FatherMarz/stash",
-      "softwareVersion": "0.2.0",
+      "softwareVersion": "0.4.0",
       "author": { "@id": "https://stash.modul4r.com/#author" }
     },
     {
@@ -174,6 +174,13 @@ stash token create my-agent --role proxy</code></pre></div>
 <script>
   const LLM_TEXT = `Set up stash, a tiny open-source secrets store for AI agents (https://github.com/FatherMarz/stash), on this machine.
 
+If stash is already installed, check its version with: stash version
+If it is older than 0.4.0, upgrade it instead of steps 1 to 6:
+   a. Stop the server and replace the binary. On macOS, copy the new file next to the old one and mv it over. A plain cp over the old file makes macOS kill the program.
+   b. Start the server again. Nothing locks until the owner password is set, so the upgrade breaks nothing.
+   c. Find every script that reads a raw value: stash get, or a direct call to /v1/secrets/NAME or /v1/env. Move each one to stash run. If a script must have the raw value (a credential helper, say), tell your user to run: stash open NAME
+   d. Tell your user to set the owner password (step 6), then go to step 7.
+
 1. Install it: go install github.com/FatherMarz/stash@latest
    If Go is not installed, clone https://github.com/FatherMarz/stash and build with: CGO_ENABLED=0 go build -o stash .
 2. Start the server: stash serve
@@ -187,6 +194,8 @@ stash token create my-agent --role proxy</code></pre></div>
    After that you cannot read a raw value, and you must never ask for that password.
 7. Run any command with all secrets injected as env vars: stash run -- <command>
    Secret values in its output show as ****.
+   If a script must read one raw value, your user makes that secret open: stash open NAME
+   Any token can read an open secret. Do not read an open secret yourself.
 8. Proxy mode, so you never touch the key: stash route create <name> --upstream <api base url> --secret <SECRET_NAME>, then call http://127.0.0.1:8555/proxy/<name>/... with a proxy-role token as the API key.
 9. Install the agent skill so future sessions know all of this: cp -r skill/stash ~/.claude/skills/stash (from the repo).
 
