@@ -47,7 +47,7 @@ func cmdRun(args []string) error {
 	cmd.Env = env
 
 	var code int
-	if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+	if ptySupported && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
 		code, err = runOnPTY(cmd, values)
 	} else {
 		code, err = runOnPipes(cmd, values)
@@ -116,15 +116,7 @@ func runOnPTY(cmd *exec.Cmd, values []string) (int, error) {
 	}
 	defer ptmx.Close()
 
-	resize := make(chan os.Signal, 1)
-	signal.Notify(resize, syscall.SIGWINCH)
-	go func() {
-		for range resize {
-			pty.InheritSize(os.Stdin, ptmx)
-		}
-	}()
-	resize <- syscall.SIGWINCH
-	defer func() { signal.Stop(resize); close(resize) }()
+	defer watchResize(ptmx)()
 
 	old, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
