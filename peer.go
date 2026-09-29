@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -15,8 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"golang.org/x/sys/unix"
 )
 
 // stash run needs every value to build the command's env. An agent must not
@@ -130,22 +127,6 @@ func peerPIDsProc(rport, lport string) ([]int, error) {
 		}
 	}
 	return pids, nil
-}
-
-func pidExe(pid int) (string, error) {
-	if runtime.GOOS == "linux" {
-		return os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
-	}
-	// kern.procargs2: a 4-byte argc, then the program path, NUL-terminated.
-	raw, err := unix.SysctlRaw("kern.procargs2", pid)
-	if err != nil {
-		return "", err
-	}
-	if len(raw) < 5 {
-		return "", fmt.Errorf("short procargs for pid %d", pid)
-	}
-	path, _, _ := bytes.Cut(raw[4:], []byte{0})
-	return string(path), nil
 }
 
 var (
