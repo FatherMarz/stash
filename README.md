@@ -66,7 +66,7 @@ stash token revoke my-agent
 stash audit                        # who read what, when
 ```
 
-Roles: `ro` reads, `rw` reads and writes, `admin` manages everything, `proxy` reads nothing — see below.
+Roles: `ro` reads, `rw` reads and writes, `admin` manages everything, `proxy` reads nothing (see below).
 
 ## Proxy mode: the agent never sees the key
 
@@ -84,7 +84,7 @@ stash puts the real key on each request on the way out. A proxy token cannot rea
 - Secrets are AES-256-GCM encrypted in `~/.stash/stash.db`. The key is `~/.stash/stash.key`. Back up both. Keep them apart.
 - stash listens on `127.0.0.1` only. If you expose it, add `--tls-cert` and `--tls-key`.
 - `stash help` lists every command. Each command maps to an HTTP route under `/v1/`.
-- `cp -r skill/stash ~/.claude/skills/stash` teaches Claude Code how to use it. Other agents can load the same file.
+- `cp -r skill/stash ~/.claude/skills/stash` teaches Claude Code how to use stash. Other agents can load the same file.
 - No web UI, no rotation, no clustering. If you need those, use Infisical or OpenBao.
 
-MIT.
+MIT. Built by Marcello Delcaro, AI-assisted.
