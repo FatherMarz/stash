@@ -30,6 +30,7 @@ Secrets (need STASH_TOKEN, and STASH_ADDR if not local):
   stash get NAME                     print a value (asks for the owner password)
   stash list
   stash ui                           browse, search, and edit secrets on one screen
+  stash rename OLD NEW
   stash delete NAME
   stash run [--] COMMAND [ARGS...]   run a command with all secrets as env vars,
                                      secret values in its output show as ****
@@ -85,6 +86,8 @@ func main() {
 		err = cmdGet(rest)
 	case "list":
 		err = cmdList(rest)
+	case "rename":
+		err = cmdRename(rest)
 	case "delete":
 		err = cmdDelete(rest)
 	case "run":
@@ -242,6 +245,14 @@ func cmdList(args []string) error {
 		fmt.Println(n)
 	}
 	return nil
+}
+
+func cmdRename(args []string) error {
+	if len(args) != 2 {
+		return errors.New("usage: stash rename OLD NEW")
+	}
+	c := newClient()
+	return c.do("POST", "/v1/secrets/"+args[0]+"/rename", map[string]string{"name": args[1]}, nil)
 }
 
 func cmdDelete(args []string) error {

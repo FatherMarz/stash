@@ -31,6 +31,7 @@ func newMux(st *Store) *http.ServeMux {
 	mux.HandleFunc("GET /v1/secrets/{name}", s.auth("ro", s.getSecret))
 	mux.HandleFunc("PUT /v1/secrets/{name}", s.auth("rw", s.putSecret))
 	mux.HandleFunc("DELETE /v1/secrets/{name}", s.auth("rw", s.deleteSecret))
+	mux.HandleFunc("POST /v1/secrets/{name}/rename", s.auth("rw", s.renameSecret))
 	mux.HandleFunc("GET /v1/env", s.auth("ro", s.envSecrets))
 	mux.HandleFunc("GET /v1/groups", s.auth("ro", s.listGroups))
 	mux.HandleFunc("PUT /v1/groups/{name}", s.auth("rw", s.setGroup))
@@ -205,6 +206,29 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, tok *Token
 		return
 	}
 	s.st.Audit(tok.Name, "delete", name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) renameSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
+	name := r.PathValue("name")
+	var body struct {
+		Name string `json:"name"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, `body must be JSON: {"name": "..."}`)
+		return
+	}
+	err := s.st.Rename(name, body.Name)
+	if errors.Is(err, ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "secret not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.st.Audit(tok.Name, "rename", name+" -> "+body.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 

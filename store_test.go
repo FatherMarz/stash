@@ -210,3 +210,40 @@ func TestEnvName(t *testing.T) {
 		}
 	}
 }
+
+func TestRenameSecret(t *testing.T) {
+	st := openTestStore(t)
+	st.Set("old.key", "v1")
+	st.Set("taken", "v2")
+	st.SetGroup("old.key", "Work")
+	st.SetOpen("old.key", true)
+	st.SetRoute(Route{Name: "api", Upstream: "https://example.com", Secret: "old.key", Header: "Authorization: Bearer {value}"})
+
+	if err := st.Rename("old.key", "taken"); err == nil {
+		t.Fatal("rename onto an existing secret was accepted")
+	}
+	if err := st.Rename("missing", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	if err := st.Rename("old.key", "new.key"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.Get("new.key"); err != nil || got != "v1" {
+		t.Fatalf("new.key = %q, %v", got, err)
+	}
+	if _, err := st.Get("old.key"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old.key still there: %v", err)
+	}
+	if g, _ := st.Groups(); g["new.key"] != "Work" || g["old.key"] != "" {
+		t.Fatalf("groups = %v", g)
+	}
+	if open, _ := st.IsOpen("new.key"); !open {
+		t.Fatal("open state did not follow the rename")
+	}
+	if open, _ := st.IsOpen("old.key"); open {
+		t.Fatal("old name is still open")
+	}
+	if r, _ := st.GetRoute("api"); r.Secret != "new.key" {
+		t.Fatalf("route secret = %q", r.Secret)
+	}
+}

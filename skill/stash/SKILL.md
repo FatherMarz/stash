@@ -67,6 +67,7 @@ in chat. You use secrets. You never see them, show them, or move them.
 stash list                          # names only, safe to show the user
 stash set NAME VALUE                # store or overwrite
 echo -n "$VALUE" | stash set NAME   # keeps the value out of shell history
+stash rename OLD NEW
 stash delete NAME
 stash run -- python agent.py        # runs the command with ALL secrets as env vars
 stash run -- sh -c 'curl -H "Authorization: Bearer $OPENAI_API_KEY" https://...'

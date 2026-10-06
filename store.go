@@ -239,6 +239,64 @@ func (s *Store) Delete(name string) error {
 	})
 }
 
+// Rename moves a secret to a new name. Its group, open state, and any
+// proxy routes that inject it follow it to the new name.
+func (s *Store) Rename(oldName, newName string) error {
+	if err := validName(newName); err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSecrets)
+		blob := b.Get([]byte(oldName))
+		if blob == nil {
+			return ErrNotFound
+		}
+		if b.Get([]byte(newName)) != nil {
+			return fmt.Errorf("a secret named %q already exists", newName)
+		}
+		if err := b.Put([]byte(newName), append([]byte(nil), blob...)); err != nil {
+			return err
+		}
+		if err := b.Delete([]byte(oldName)); err != nil {
+			return err
+		}
+		for _, bucket := range [][]byte{bucketGroups, bucketOpen} {
+			mb := tx.Bucket(bucket)
+			mb.Delete([]byte(newName))
+			if v := mb.Get([]byte(oldName)); v != nil {
+				if err := mb.Put([]byte(newName), append([]byte(nil), v...)); err != nil {
+					return err
+				}
+				mb.Delete([]byte(oldName))
+			}
+		}
+		rb := tx.Bucket(bucketRoutes)
+		updates := map[string][]byte{}
+		err := rb.ForEach(func(k, v []byte) error {
+			var r Route
+			if json.Unmarshal(v, &r) != nil || r.Secret != oldName {
+				return nil
+			}
+			r.Secret = newName
+			rec, err := json.Marshal(r)
+			if err != nil {
+				return err
+			}
+			updates[string(k)] = rec
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for k, rec := range updates {
+			if err := rb.Put([]byte(k), rec); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // SetGroup files a secret under a group the owner picked. An empty group
 // removes it, and the secret falls back to grouping by its first word.
 func (s *Store) SetGroup(name, group string) error {
