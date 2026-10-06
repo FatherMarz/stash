@@ -148,6 +148,7 @@ stash ui                           <span class="c"># browse, search, and edit on
 
   <h2>Give each agent its own token</h2>
   <div class="codewrap"><pre><code>stash token create my-agent --role ro
+stash token rename my-agent builder
 stash token revoke my-agent
 stash audit                        <span class="c"># who read what, when</span></code></pre></div>
   <p class="small">Roles: <span class="a">ro</span> reads, <span class="a">rw</span> reads and writes, <span class="a">admin</span> manages everything, <span class="a">proxy</span> reads nothing — see below.</p>

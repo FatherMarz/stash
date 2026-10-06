@@ -62,6 +62,7 @@ admin token.
 
 ```sh
 stash token create my-agent --role ro
+stash token rename my-agent builder
 stash token revoke my-agent
 stash audit                        # who read what, when
 ```

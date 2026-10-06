@@ -371,6 +371,43 @@ func (s *Store) RevokeToken(name string) error {
 	})
 }
 
+// RenameToken changes a token's name. The token value stays the same.
+func (s *Store) RenameToken(oldName, newName string) error {
+	if err := validName(newName); err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTokens)
+		var key []byte
+		var tok Token
+		var dup bool
+		b.ForEach(func(k, v []byte) error {
+			var t Token
+			if json.Unmarshal(v, &t) != nil {
+				return nil
+			}
+			if t.Name == oldName {
+				key, tok = append([]byte(nil), k...), t
+			} else if t.Name == newName {
+				dup = true
+			}
+			return nil
+		})
+		if key == nil {
+			return ErrNotFound
+		}
+		if dup {
+			return fmt.Errorf("a token named %q already exists", newName)
+		}
+		tok.Name = newName
+		rec, err := json.Marshal(tok)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, rec)
+	})
+}
+
 // EnsureAdmin creates the "admin" token on first run. It returns the
 // plaintext token and true when it created one.
 func (s *Store) EnsureAdmin() (string, bool, error) {

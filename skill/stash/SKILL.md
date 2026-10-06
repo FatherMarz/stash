@@ -84,6 +84,7 @@ Admin-only commands:
 
 ```sh
 stash token create NAME --role ro   # roles: proxy, ro, rw, admin — pick the lowest that works
+stash token rename OLD NEW         # same token value, new name
 stash token revoke NAME
 stash token list
 stash audit --limit 50              # who read what, newest first

@@ -131,7 +131,23 @@ func TestTokens(t *testing.T) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 
-	if err := st.RevokeToken("agent-1"); err != nil {
+	if _, err := st.NewToken("agent-2", "ro"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RenameToken("agent-1", "agent-2"); err == nil {
+		t.Fatal("rename onto an existing name was accepted")
+	}
+	if err := st.RenameToken("nobody", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rename missing: want ErrNotFound, got %v", err)
+	}
+	if err := st.RenameToken("agent-1", "builder"); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := st.VerifyToken(plain); err != nil || tok.Name != "builder" || tok.Role != "rw" {
+		t.Fatalf("after rename: %+v %v", tok, err)
+	}
+
+	if err := st.RevokeToken("builder"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.VerifyToken(plain); !errors.Is(err, ErrNotFound) {

@@ -42,6 +42,7 @@ func newMux(st *Store) *http.ServeMux {
 	mux.HandleFunc("POST /v1/tokens", s.auth("admin", s.createToken))
 	mux.HandleFunc("GET /v1/tokens", s.auth("admin", s.listTokens))
 	mux.HandleFunc("DELETE /v1/tokens/{name}", s.auth("admin", s.revokeToken))
+	mux.HandleFunc("POST /v1/tokens/{name}/rename", s.auth("admin", s.renameToken))
 	mux.HandleFunc("GET /v1/audit", s.auth("admin", s.listAudit))
 	mux.HandleFunc("POST /v1/routes", s.auth("admin", s.createRoute))
 	mux.HandleFunc("GET /v1/routes", s.auth("admin", s.listRoutes))
@@ -332,6 +333,29 @@ func (s *server) revokeToken(w http.ResponseWriter, r *http.Request, tok *Token)
 		return
 	}
 	s.st.Audit(tok.Name, "token-revoke", name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) renameToken(w http.ResponseWriter, r *http.Request, tok *Token) {
+	name := r.PathValue("name")
+	var body struct {
+		Name string `json:"name"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, `body must be JSON: {"name": "..."}`)
+		return
+	}
+	err := s.st.RenameToken(name, body.Name)
+	if errors.Is(err, ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "token not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.st.Audit(tok.Name, "token-rename", name+" -> "+body.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 

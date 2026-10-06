@@ -44,6 +44,7 @@ Owner password (need an admin STASH_TOKEN and a terminal):
 Tokens (need an admin STASH_TOKEN):
   stash token create NAME [--role proxy|ro|rw|admin]
   stash token list
+  stash token rename OLD NEW         same token value, new name
   stash token revoke NAME
   stash audit [--limit N]
 
@@ -362,7 +363,7 @@ func cmdResetPassword(args []string) error {
 
 func cmdToken(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: stash token create|list|revoke")
+		return errors.New("usage: stash token create|list|rename|revoke")
 	}
 	sub, rest := args[0], args[1:]
 	c := newClient()
@@ -406,6 +407,11 @@ func cmdToken(args []string) error {
 			fmt.Printf("%s\t%s\t%s\n", t.Name, t.Role, t.Created.Format("2006-01-02 15:04"))
 		}
 		return nil
+	case "rename":
+		if len(rest) != 2 {
+			return errors.New("usage: stash token rename OLD NEW")
+		}
+		return c.do("POST", "/v1/tokens/"+rest[0]+"/rename", map[string]string{"name": rest[1]}, nil)
 	case "revoke":
 		if len(rest) != 1 {
 			return errors.New("usage: stash token revoke NAME")
