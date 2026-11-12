@@ -51,6 +51,14 @@ stash route create service --upstream https://api.example.com --secret SERVICE_K
 
 Point the SDK at `SERVICE_KEY_BASE_URL`. Agents cannot add or change a connection.
 
+stash sends the key as `Authorization: Bearer KEY` by default. If the API uses its own header, name it:
+
+```sh
+stash route create virustotal --upstream https://www.virustotal.com --secret VIRUSTOTAL_API_KEY --header "x-apikey: {value}"
+```
+
+The program sends its stand-in key in the same header. stash swaps it for the real key.
+
 ### AWS
 
 ```sh
