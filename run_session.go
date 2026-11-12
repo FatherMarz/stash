@@ -38,14 +38,15 @@ type runSetup struct {
 	SecretNames []string          `json:"secret_names"`
 }
 
-// secretPaths says how each secret reaches a program. "proxy": the program
+// secretKinds says how each secret reaches a program. "proxy": the program
 // gets a run token and stash adds the key on the way to its pinned site.
-// "aws": stash signs AWS calls, the key pair never leaves stash. "hand-over":
+// "aws": stash signs AWS calls, the key pair never leaves stash. "direct":
 // the program gets the real value, masked as **** in its output.
-func secretPaths(names []string, routes []Route) map[string]string {
+// People see two paths: proxy (proxy and aws) and direct.
+func secretKinds(names []string, routes []Route) map[string]string {
 	paths := map[string]string{}
 	for _, name := range names {
-		paths[name] = "hand-over"
+		paths[name] = "direct"
 		if _, ok := builtinRoute(name); ok {
 			paths[name] = "proxy"
 		}
@@ -84,7 +85,7 @@ func (s *server) runSession(w http.ResponseWriter, r *http.Request, tok *Token) 
 	for _, name := range names {
 		known[name] = true
 	}
-	paths := secretPaths(names, routes)
+	paths := secretKinds(names, routes)
 	wanted := body.Secrets
 	if len(wanted) == 0 {
 		wanted = names
@@ -143,7 +144,7 @@ func (s *server) runSession(w http.ResponseWriter, r *http.Request, tok *Token) 
 			envNames[key] = true
 		}
 	}
-	// A hand-over secret must not reuse a proxied secret's *_BASE_URL name.
+	// A direct secret must not reuse a proxied secret's *_BASE_URL name.
 	for _, rt := range out.Routes {
 		for name := range out.Values {
 			if envName(name) == envName(rt.Secret)+"_BASE_URL" {
@@ -164,8 +165,19 @@ func (s *server) runSession(w http.ResponseWriter, r *http.Request, tok *Token) 
 		handed = append(handed, name)
 	}
 	sort.Strings(handed)
-	s.st.Audit(tok.Name, "run-start", "proxy "+strconv.Itoa(len(out.Routes))+", hand-over: "+strings.Join(handed, ","))
+	s.st.Audit(tok.Name, "run-start", "proxy "+strconv.Itoa(len(out.Routes))+", direct: "+strings.Join(handed, ","))
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// secretPaths is what people see: AWS keys are on the proxy path too.
+func secretPaths(names []string, routes []Route) map[string]string {
+	paths := secretKinds(names, routes)
+	for name, kind := range paths {
+		if kind == "aws" {
+			paths[name] = "proxy"
+		}
+	}
+	return paths
 }
 
 func newRunToken() (string, error) {

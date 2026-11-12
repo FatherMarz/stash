@@ -8,15 +8,16 @@ description: Use stash when a task needs an API key, AWS access, a database URL,
 Use the `stash` CLI. It finds its own agent token. Do not read `~/.stash/agent.token`, and never ask for the owner token or password.
 `STASH_ADDR` changes the server address from `http://127.0.0.1:8555`.
 
-## Three paths
+## Two paths
 
 `stash list` shows each secret and its path.
 
-- **proxy** (API keys with a known site): the program gets a run token in `NAME` and the proxy URL in `NAME_BASE_URL`.
-  Point the SDK or HTTP client at `NAME_BASE_URL`. stash adds the real key, only for that site.
-- **aws** (AWS key pairs): use the AWS profile, for example `aws --profile vigi-lenny ...`. stash signs each call.
-  The key pair never reaches the program. Do not ask for AWS keys.
-- **hand-over** (everything else): the program gets the real value in `NAME`. stash prints it as `****` in output.
+- **proxy**: the program never holds the key.
+  - API keys with a known site: the program gets a run token in `NAME` and the proxy URL in `NAME_BASE_URL`.
+    Point the SDK or HTTP client at `NAME_BASE_URL`. stash adds the real key, only for that site.
+  - AWS key pairs: use the AWS profile, for example `aws --profile my-profile ...`. stash signs each call.
+    Do not ask for AWS keys.
+- **direct** (everything else): the program gets the real value in `NAME`. stash prints it as `****` in output.
 
 ## Run a program
 
@@ -36,7 +37,7 @@ Never ask the user to paste a value into chat. Tell them to run `stash set NAME`
 ## Rules
 
 - Never use `stash get`, `/v1/secrets/NAME`, or `/v1/env`. They are owner operations.
-- Never print, encode, copy, or write a handed-over value to get around the masking.
+- Never print, encode, copy, or write a direct value to get around the masking.
 - If an API needs a connection that does not exist, ask the owner to run `stash route create`.
 
 ## Errors

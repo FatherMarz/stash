@@ -149,7 +149,7 @@ stash list
 stash run -- sh -c 'echo "stash run works"'
 ```
 
-`stash list` shows each secret and its path: `proxy`, `aws` or `hand-over`.
+`stash list` shows each secret and its path: `proxy` or `direct`.
 
 If setup moved an AWS profile, test it. Use the profile name from setup in place of `PROFILE`:
 

@@ -145,9 +145,8 @@ func printPaths(st *Store, moved []string) error {
 		count[paths[name]] = append(count[paths[name]], name)
 	}
 	fmt.Printf("\n%d secrets sorted:\n", len(names))
-	fmt.Printf("  proxy      %3d  the program never holds the key\n", len(count["proxy"]))
-	fmt.Printf("  aws        %3d  stash signs each AWS call\n", len(count["aws"]))
-	fmt.Printf("  hand-over  %3d  the program gets the value, printed as ****\n", len(count["hand-over"]))
+	fmt.Printf("  proxy   %3d  the program never holds the key (API keys and AWS keys)\n", len(count["proxy"]))
+	fmt.Printf("  direct  %3d  the program gets the value, printed as ****\n", len(count["direct"]))
 	for _, profile := range moved {
 		fmt.Printf("AWS profile %s now goes through stash.\n", profile)
 	}

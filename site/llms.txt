@@ -15,12 +15,12 @@ Start the server with stash serve. It listens on http://127.0.0.1:8555.
 There are two tokens: owner and agent. The agent token works only through the stash program.
 Agents never read a value. Version 0.5 needs fresh tokens and has no open secrets.
 
-## Three paths
+## Two paths
 
-proxy: API keys with a known site. The program gets a run token in NAME and the proxy URL in NAME_BASE_URL.
-aws: AWS key pairs. The AWS profile sends calls through stash, which signs them. The keys never leave stash.
-hand-over: everything else. The program gets the real value. stash prints it as **** in output.
-A program that holds a handed-over value can still leak it on purpose.
+proxy: the program never holds the key. API keys with a known site: the program gets a run token in NAME
+and the proxy URL in NAME_BASE_URL. AWS key pairs: the AWS profile sends calls through stash, which signs them.
+direct: everything else. The program gets the real value. stash prints it as **** in output.
+A program that holds a direct value can still leak it on purpose.
 
 ## Use
 

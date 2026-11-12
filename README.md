@@ -14,22 +14,23 @@ Run setup once, in your own terminal, while the server is stopped. Setup does fo
 
 1. It shows the owner token once. Save it in your password manager. Never put it in a shell file.
 2. It stores an agent token in `~/.stash/agent.token`. The CLI uses it by itself. Agents need nothing.
-3. It sorts every secret into one of three paths (see below) and prints the count for each.
+3. It sorts every secret into one of two paths (see below) and prints the count for each.
 4. It moves every AWS profile that read its keys with `stash get` to stash signing.
 
 There is nothing else to choose.
 
-## Three paths
+## Two paths
 
 Each secret reaches a program in one way. stash picks the path from the secret. `stash list` shows it.
 
 | Path | Secrets | What the program gets |
 | --- | --- | --- |
-| proxy | API keys with a known site | A run token and a `NAME_BASE_URL`. stash adds the real key on the way out, only to that site. |
-| aws | AWS key pairs | Nothing. The AWS profile sends each call through stash, and stash signs it. |
-| hand-over | Everything else: database URLs, signing secrets, `.env` files, publish tokens | The real value. stash prints it as `****` in the program's output. |
+| proxy | API keys with a known site, and AWS key pairs | Never the key. For an API key: a run token and a `NAME_BASE_URL`, and stash adds the real key on the way out, only to that site. For AWS: the profile sends each call through stash, and stash signs it. |
+| direct | Everything else: database URLs, signing secrets, `.env` files, publish tokens | The real value. stash prints it as `****` in the program's output. |
 
-The hand-over path does not stop a program that wants to leak a value. The program holds the value,
+A proxy works only for calls to a website or AWS. A program that logs in to a database or signs data itself must hold the real value.
+
+The direct path does not stop a program that wants to leak a value. The program holds the value,
 so it can write it to a file or encode it before it prints it. Use the proxy path for every API key you can.
 
 ### Proxy

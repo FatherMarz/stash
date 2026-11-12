@@ -143,7 +143,7 @@ stash run -- python agent.py       <span class="c"># the agent gets its secrets,
 
   <h2>Two paths for agents</h2>
   <p class="small"><b>Proxy.</b> API keys and AWS keys never reach the program. The program gets a run token. stash adds the real key on the way out, and only to that key's own site. For AWS, the profile sends each call through stash, and stash signs it.</p>
-  <p class="small"><b>Hand-over.</b> Database URLs, signing secrets and <span class="a">.env</span> files reach the program as real values, because the program needs them. stash prints them as <span class="a">****</span> in output. A program that wants to leak one still can, so keep every API key on the proxy.</p>
+  <p class="small"><b>Direct.</b> Database URLs, signing secrets and <span class="a">.env</span> files reach the program as real values, because the program needs them. stash prints them as <span class="a">****</span> in output. A program that wants to leak one still can, so keep every API key on the proxy.</p>
 
   <h2>One setup, two tokens</h2>
   <p class="small"><span class="a">stash setup</span> gives you the owner token once and sorts every secret into its path. Agents need nothing: the agent token works only through the stash program, so a copy in <span class="a">curl</span> does nothing. Each <span class="a">stash run</span> gets its own run token, which ends when the program exits.</p>
