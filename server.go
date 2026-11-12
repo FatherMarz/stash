@@ -68,12 +68,27 @@ func roleAllows(have, need string) bool {
 	return (have == "owner" && (need == "owner" || need == "agent")) || (have == "agent" && need == "agent")
 }
 
+func isStashToken(v string) bool {
+	v = strings.TrimPrefix(v, "Bearer ")
+	return strings.HasPrefix(v, "stash_run_") || strings.HasPrefix(v, "stash_agent_") || strings.HasPrefix(v, "stash_owner_")
+}
+
 func requestToken(r *http.Request) string {
 	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
 		return strings.TrimPrefix(header, "Bearer ")
 	}
 	if strings.HasPrefix(r.URL.Path, "/proxy/") {
-		return r.Header.Get("X-Api-Key")
+		if v := r.Header.Get("X-Api-Key"); v != "" {
+			return v
+		}
+		// APIs use their own key header (x-apikey, X-Subscription-Token, ...).
+		// Take the stand-in from whichever header carries a stash token.
+		for name := range r.Header {
+			if v := r.Header.Get(name); isStashToken(v) {
+				return v
+			}
+		}
+		return ""
 	}
 	if strings.HasPrefix(r.URL.Path, "/aws/") {
 		return r.Header.Get("X-Amz-Security-Token")
@@ -480,6 +495,11 @@ func (s *server) proxyRequest(w http.ResponseWriter, r *http.Request, tok *Token
 			pr.Out.Host = upstream.Host
 			pr.Out.Header.Del("Authorization") // never forward the stash token
 			pr.Out.Header.Del("X-Api-Key")
+			for name := range pr.Out.Header {
+				if isStashToken(pr.Out.Header.Get(name)) {
+					pr.Out.Header.Del(name)
+				}
+			}
 			pr.Out.Header.Set("Accept-Encoding", "identity")
 			pr.Out.Header.Set(strings.TrimSpace(headerName), headerValue)
 		},

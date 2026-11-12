@@ -62,3 +62,28 @@ func TestProxyRedactsCompressedResponses(t *testing.T) {
 		t.Fatal("compressed error exposed a key")
 	}
 }
+
+func TestProxyTakesStandInFromRouteHeader(t *testing.T) {
+	const key = "real-vt-key"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Apikey") != key {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+	e := newTestEnv(t)
+	e.st.Set("VT_KEY", key)
+	e.st.SetRoute(Route{Name: "vt", Secret: "VT_KEY", Upstream: upstream.URL, Header: "x-apikey: {value}"})
+	agent := e.mustCreateToken(t, "vt-agent", "agent")
+	req, _ := http.NewRequest("GET", e.srv.URL+"/proxy/vt/files/abc", nil)
+	req.Header.Set("x-apikey", agent)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
