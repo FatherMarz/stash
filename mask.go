@@ -21,9 +21,13 @@ type masker struct {
 }
 
 func newMasker(values []string, out func([]byte)) *masker {
+	return newMaskerMinLength(values, out, maskMinLen)
+}
+
+func newMaskerMinLength(values []string, out func([]byte), minLen int) *masker {
 	var vals []string
 	for _, v := range values {
-		if len(v) >= maskMinLen {
+		if len(v) >= minLen {
 			vals = append(vals, v)
 		}
 	}

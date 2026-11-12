@@ -20,7 +20,7 @@ import (
 // VIGI). Seeing or copying a value asks for the owner password once per
 // session.
 
-const uiHelp = "↑↓ move  / search  tab complete  enter show  c copy  e edit  n new  r rename  g group  d delete  o open/close  q quit"
+const uiHelp = "↑↓ move  / search  tab complete  enter show  c copy  e edit  n new  r rename  g group  d delete  q quit"
 
 type uiMode int
 
@@ -40,7 +40,6 @@ type uiRow struct {
 type uiModel struct {
 	c        *client
 	names    []string
-	open     map[string]bool
 	groups   map[string]string // custom group per secret
 	complete []string          // tab completions for the current input
 	shown    map[string]string
@@ -65,7 +64,6 @@ var (
 	uiCursor = lipgloss.NewStyle().Reverse(true)
 	uiDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	uiValue  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	uiOpen   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	uiErr    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
@@ -73,7 +71,7 @@ func cmdUI(args []string) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("stash ui needs a terminal")
 	}
-	m := &uiModel{c: newClient(), open: map[string]bool{}, groups: map[string]string{}, shown: map[string]string{}, height: 24, width: 80}
+	m := &uiModel{c: newClient(), groups: map[string]string{}, shown: map[string]string{}, height: 24, width: 80}
 	m.search = textinput.New()
 	m.search.Prompt = "/ "
 	m.input = textinput.New()
@@ -91,12 +89,6 @@ func (m *uiModel) reload() error {
 	if err := m.c.do("GET", "/v1/secrets", nil, &list); err != nil {
 		return err
 	}
-	var open struct {
-		Open []string `json:"open"`
-	}
-	if err := m.c.do("GET", "/v1/open", nil, &open); err != nil {
-		return err
-	}
 	var groups struct {
 		Groups map[string]string `json:"groups"`
 	}
@@ -105,10 +97,6 @@ func (m *uiModel) reload() error {
 	}
 	m.names = list.Secrets
 	m.groups = groups.Groups
-	m.open = map[string]bool{}
-	for _, n := range open.Open {
-		m.open[n] = true
-	}
 	m.rebuild()
 	return nil
 }
@@ -268,7 +256,7 @@ func (m *uiModel) say(format string, a ...any) {
 func (m *uiModel) fail(err error) {
 	msg := err.Error()
 	if strings.Contains(msg, "token role does not allow") {
-		msg += " (this needs your admin token: STASH_TOKEN=... stash ui)"
+		msg += " (this needs your owner token: STASH_TOKEN=... stash ui)"
 	}
 	m.status, m.errState = msg, true
 }
@@ -567,11 +555,7 @@ func (m *uiModel) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return
 				}
 				delete(m.shown, name)
-				note := ""
-				if m.open[name] {
-					note = " (it was open: press o to open it again)"
-				}
-				m.after("renamed %s to %s%s", name, newName, note)
+				m.after("renamed %s to %s", name, newName)
 				m.jumpTo(newName)
 			})
 		})
@@ -598,14 +582,6 @@ func (m *uiModel) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			delete(m.shown, name)
 			m.after("deleted %s", name)
 		})
-	case "o":
-		method, verb := "PUT", "opened"
-		if m.open[name] {
-			method, verb = "DELETE", "closed"
-		}
-		m.withPassword(func() error { return m.c.do(method, "/v1/open/"+name, nil, nil) }, func(m *uiModel) {
-			m.after("%s %s", verb, name)
-		})
 	}
 	return m, nil
 }
@@ -622,9 +598,6 @@ func (m *uiModel) jumpTo(name string) {
 func (m *uiModel) View() string {
 	var b strings.Builder
 	title := fmt.Sprintf("stash  %d secrets", len(m.names))
-	if len(m.open) > 0 {
-		title += fmt.Sprintf("  (%d open to scripts)", len(m.open))
-	}
 	b.WriteString(uiHeader.Render(title) + "\n")
 	if m.mode == modeSearch || m.search.Value() != "" {
 		b.WriteString(m.search.View() + "\n")
@@ -650,9 +623,6 @@ func (m *uiModel) View() string {
 			continue
 		}
 		line := "  " + r.name
-		if m.open[r.name] {
-			line += uiOpen.Render("  open")
-		}
 		if i == m.cursor {
 			line = uiCursor.Render("  "+r.name) + strings.TrimPrefix(line, "  "+r.name)
 		}

@@ -23,13 +23,14 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, _, err := st.EnsureAdmin()
+	admin, _, err := st.EnsureOwner()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetPassword("", testPW); err != nil {
 		t.Fatal(err)
 	}
+	peerCheck = func(*http.Request) bool { return true }
 	srv := httptest.NewServer(newMux(st))
 	t.Cleanup(func() { srv.Close(); st.Close() })
 	return &testEnv{srv: srv, st: st, admin: admin}
@@ -104,7 +105,7 @@ func TestMissingAndBadTokens(t *testing.T) {
 
 func TestSecretCRUDOverHTTP(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent-rw", "rw")
+	rw := e.mustCreateToken(t, "agent-rw", "owner")
 
 	resp, body := e.req(t, rw, "PUT", "/v1/secrets/API_KEY", map[string]string{"value": "hunter2"})
 	if resp.StatusCode != http.StatusNoContent {
@@ -147,11 +148,15 @@ func TestSecretCRUDOverHTTP(t *testing.T) {
 
 func TestReadOnlyTokenCannotWrite(t *testing.T) {
 	e := newTestEnv(t)
-	ro := e.mustCreateToken(t, "agent-ro", "ro")
+	ro := e.mustCreateToken(t, "agent-ro", "agent")
 
 	resp, _ := e.req(t, ro, "PUT", "/v1/secrets/X", map[string]string{"value": "v"})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("agent add = %d, want 204", resp.StatusCode)
+	}
+	resp, _ = e.req(t, ro, "PUT", "/v1/secrets/X", map[string]string{"value": "changed"})
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("ro put = %d, want 403", resp.StatusCode)
+		t.Fatalf("agent overwrite = %d, want 403", resp.StatusCode)
 	}
 	resp, _ = e.req(t, ro, "GET", "/v1/secrets", nil)
 	if resp.StatusCode != http.StatusOK {
@@ -161,7 +166,7 @@ func TestReadOnlyTokenCannotWrite(t *testing.T) {
 
 func TestNonAdminCannotManageTokens(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent-rw", "rw")
+	rw := e.mustCreateToken(t, "agent-rw", "agent")
 
 	resp, _ := e.req(t, rw, "POST", "/v1/tokens", map[string]string{"name": "evil", "role": "admin"})
 	if resp.StatusCode != http.StatusForbidden {
@@ -175,7 +180,7 @@ func TestNonAdminCannotManageTokens(t *testing.T) {
 
 func TestRevokedTokenStopsWorking(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent-rw", "rw")
+	rw := e.mustCreateToken(t, "agent-rw", "owner")
 
 	resp, _ := e.req(t, e.admin, "DELETE", "/v1/tokens/agent-rw", nil)
 	if resp.StatusCode != http.StatusNoContent {
@@ -189,7 +194,7 @@ func TestRevokedTokenStopsWorking(t *testing.T) {
 
 func TestAuditRecordsReads(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent-rw", "rw")
+	rw := e.mustCreateToken(t, "agent-rw", "owner")
 	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v"})
 	e.reqPW(t, rw, testPW, "GET", "/v1/secrets/K", nil)
 
@@ -214,7 +219,7 @@ func TestAuditRecordsReads(t *testing.T) {
 
 func TestListSecretsShape(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent-rw", "rw")
+	rw := e.mustCreateToken(t, "agent-rw", "owner")
 	for i := 0; i < 3; i++ {
 		e.req(t, rw, "PUT", fmt.Sprintf("/v1/secrets/key_%d", i), map[string]string{"value": "v"})
 	}
@@ -258,7 +263,7 @@ func TestProxyInjectsRealKeyAndHidesIt(t *testing.T) {
 		t.Fatalf("create route = %d %s", resp.StatusCode, body)
 	}
 
-	px := e.mustCreateToken(t, "bot", "proxy")
+	px := e.mustCreateToken(t, "bot", "agent")
 	resp, body = e.req(t, px, "POST", "/proxy/openai/v1/chat/completions", map[string]string{"model": "gpt"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("proxy = %d %s", resp.StatusCode, body)
@@ -300,7 +305,7 @@ func TestProxyRouteValidation(t *testing.T) {
 
 func TestProxyMissingRouteAndSecret(t *testing.T) {
 	e := newTestEnv(t)
-	px := e.mustCreateToken(t, "bot", "proxy")
+	px := e.mustCreateToken(t, "bot", "agent")
 
 	resp, _ := e.req(t, px, "GET", "/proxy/nope/v1/x", nil)
 	if resp.StatusCode != http.StatusNotFound {
@@ -326,7 +331,7 @@ func TestRouteDelete(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete route = %d", resp.StatusCode)
 	}
-	px := e.mustCreateToken(t, "bot", "proxy")
+	px := e.mustCreateToken(t, "bot", "agent")
 	resp, _ = e.req(t, px, "GET", "/proxy/r1/x", nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("deleted route = %d, want 404", resp.StatusCode)

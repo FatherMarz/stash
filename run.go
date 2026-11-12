@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -9,54 +10,128 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
 )
 
-// stash run starts the command in the caller's own shell, as it always did,
-// so the command keeps its directory, terminal, and permissions. The one
-// change is its output: every secret value in it shows as ****.
+// stash run starts the command with its secrets. An API key with a proxy
+// route arrives as a run token plus a matching *_BASE_URL, so the real key
+// never enters the command's process. AWS keys never arrive at all: the AWS
+// profile sends calls through stash. Every other secret arrives as its real
+// value, and stash prints it as **** in the command's output.
+
+type commandExit struct{ code int }
+
+func (e *commandExit) Error() string { return fmt.Sprintf("command exited with status %d", e.code) }
 
 func cmdRun(args []string) error {
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
-	}
-	if len(args) == 0 {
-		return errors.New("usage: stash run [--] COMMAND [ARGS...]")
-	}
-	c := newClient()
-	var secrets map[string]string
-	err := c.do("GET", "/v1/env", nil, &secrets)
-	if isPasswordErr(err) {
-		if c.password, err = readPassword("owner password: "); err != nil {
-			return err
+	var selected []string
+	for len(args) > 0 {
+		switch args[0] {
+		case "--":
+			args = args[1:]
+			goto ready
+		case "--secret":
+			if len(args) < 2 || args[1] == "" {
+				return errors.New("--secret needs a secret name")
+			}
+			selected = append(selected, args[1])
+			args = args[2:]
+		default:
+			if strings.HasPrefix(args[0], "--") {
+				return fmt.Errorf("unknown run option %s", args[0])
+			}
+			goto ready
 		}
-		err = c.do("GET", "/v1/env", nil, &secrets)
 	}
-	if err != nil {
-		return err
+ready:
+	if len(args) == 0 {
+		return errors.New("usage: stash run [--secret NAME ...] [--] COMMAND [ARGS...]")
 	}
-	env := os.Environ()
-	values := make([]string, 0, len(secrets))
-	for name, value := range secrets {
-		env = append(env, envName(name)+"="+value)
-		values = append(values, value)
-	}
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Env = env
+	return runProxied(args, selected)
+}
 
-	var code int
-	if ptySupported && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
-		code, err = runOnPTY(cmd, values)
-	} else {
-		code, err = runOnPipes(cmd, values)
+// The server creates a scoped proxy credential without returning raw values.
+func runProxied(args, selected []string) (err error) {
+	c := newClient()
+	var setup runSetup
+	if err := c.do("POST", "/v1/run", map[string]any{"secrets": selected}, &setup); err != nil {
+		return err
 	}
+	cleanup := &client{addr: c.addr, token: setup.Token, http: c.http}
+	defer func() {
+		if cleanupErr := cleanup.do("DELETE", "/v1/run", nil, nil); cleanupErr != nil {
+			fmt.Fprintln(os.Stderr, "stash: could not revoke run token; it expires within one hour")
+		}
+	}()
+	stopRenew := make(chan struct{})
+	defer close(stopRenew)
+	go func() {
+		tick := time.NewTicker(15 * time.Minute)
+		defer tick.Stop()
+		for {
+			select {
+			case <-stopRenew:
+				return
+			case <-tick.C:
+				cleanup.do("POST", "/v1/run/renew", nil, nil)
+			}
+		}
+	}()
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = proxyEnvironment(os.Environ(), c.addr, setup)
+	masked := []string{setup.Token, c.token}
+	for _, value := range setup.Values {
+		masked = append(masked, value)
+	}
+	code, err := runCommand(cmd, masked)
 	if err != nil {
 		return err
 	}
-	os.Exit(code)
+	if code != 0 {
+		return &commandExit{code}
+	}
 	return nil
+}
+
+// Remove ambient stash authority and every stored secret name, including
+// secrets outside the selected scope, before constructing the child env.
+func proxyEnvironment(parent []string, addr string, setup runSetup) []string {
+	blocked := map[string]bool{"STASH_TOKEN": true, "STASH_ADDR": true, "STASH_MASTER_KEY": true, "DSH_STASH_TOKEN": true, "DSH_STASH_ADDR": true, "OPENAI_BASE_URL": true, "ANTHROPIC_BASE_URL": true}
+	for _, name := range setup.SecretNames {
+		blocked[envName(name)] = true
+		blocked[envName(name)+"_BASE_URL"] = true
+	}
+	var env []string
+	for _, pair := range parent {
+		key, _, _ := strings.Cut(pair, "=")
+		if !blocked[key] {
+			env = append(env, pair)
+		}
+	}
+	for name, value := range setup.Values {
+		env = append(env, envName(name)+"="+value)
+	}
+	for _, rt := range setup.Routes {
+		env = append(env, envName(rt.Secret)+"="+setup.Token)
+		env = append(env, envName(rt.Secret)+"_BASE_URL="+strings.TrimRight(addr, "/")+"/proxy/"+rt.Name)
+		if rt.Secret == "OPENAI_API_KEY" {
+			env = append(env, "OPENAI_BASE_URL="+strings.TrimRight(addr, "/")+"/proxy/"+rt.Name)
+		}
+		if rt.Secret == "ANTHROPIC_API_KEY" {
+			env = append(env, "ANTHROPIC_BASE_URL="+strings.TrimRight(addr, "/")+"/proxy/"+rt.Name)
+		}
+	}
+	return env
+}
+
+func runCommand(cmd *exec.Cmd, values []string) (int, error) {
+	if ptySupported && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+		return runOnPTY(cmd, values)
+	}
+	return runOnPipes(cmd, values)
 }
 
 func isPasswordErr(err error) bool {

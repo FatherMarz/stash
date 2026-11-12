@@ -5,19 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0d1220">
 <title>Stash | Home</title>
-<meta name="description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. Per-agent tokens, audit log, proxy mode. MIT.">
+<meta name="description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. API keys and AWS keys stay in stash, audit log. MIT.">
 <link rel="canonical" href="https://stash.modul4r.com/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="stash">
 <meta property="og:title" content="stash — a tiny secrets store for AI agents">
-<meta property="og:description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. Per-agent tokens, audit log, proxy mode. MIT.">
+<meta property="og:description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. API keys and AWS keys stay in stash, audit log. MIT.">
 <meta property="og:url" content="https://stash.modul4r.com/">
 <meta property="og:image" content="https://stash.modul4r.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="stash — a tiny secrets store for AI agents">
-<meta name="twitter:description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. Per-agent tokens, audit log, proxy mode. MIT.">
+<meta name="twitter:description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. API keys and AWS keys stay in stash, audit log. MIT.">
 <meta name="twitter:image" content="https://stash.modul4r.com/og.png">
 <script type="application/ld+json">
 {
@@ -27,7 +27,7 @@
       "@type": "SoftwareApplication",
       "@id": "https://stash.modul4r.com/#app",
       "name": "stash",
-      "description": "A tiny open-source secrets store for AI agents. One 7 MB binary encrypts secrets with AES-256-GCM into a single file and serves them over a token-protected HTTP API, with per-agent tokens, an audit log, and a proxy mode where agents never see the key.",
+      "description": "A tiny open-source secrets store for AI agents. One 7 MB binary encrypts secrets with AES-256-GCM into a single file and serves them over a token-protected HTTP API, with an audit log and a proxy that keeps API keys and AWS keys out of the agent's programs.",
       "url": "https://stash.modul4r.com/",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "macOS, Linux, Windows",
@@ -135,28 +135,21 @@
   <h2>Quick start</h2>
   <div class="codewrap"><pre><code>go install github.com/FatherMarz/stash@latest
 
-stash serve                        <span class="c"># prints your admin token, once</span>
-export STASH_TOKEN=stash_...
-stash password set                 <span class="c"># the owner password, typed at a terminal</span>
-stash set OPENAI_API_KEY sk-...    <span class="c"># store a secret</span>
-stash get OPENAI_API_KEY           <span class="c"># read it back (asks for the owner password)</span>
-stash run -- python agent.py       <span class="c"># run anything with all secrets as env vars</span>
-stash ui                           <span class="c"># browse, search, and edit on one screen</span></code></pre></div>
+stash setup                        <span class="c"># once, in your terminal: owner token, paths, AWS</span>
+stash serve
+stash set OPENAI_API_KEY           <span class="c"># paste the value in your terminal</span>
+stash list                         <span class="c"># each secret and its path</span>
+stash run -- python agent.py       <span class="c"># the agent gets its secrets, never your API keys</span></code></pre></div>
 
-  <h2>Agents use secrets, they never see them</h2>
-  <p class="small">A token can list, write, run commands, and proxy. It cannot read a value. Reading a value needs the owner password, typed at a terminal. <span class="a">stash run</span> gives the command its secrets and prints each value in its output as <span class="a">****</span>. A script that must read one raw value needs <span class="a">stash open NAME</span>.</p>
+  <h2>Two paths for agents</h2>
+  <p class="small"><b>Proxy.</b> API keys and AWS keys never reach the program. The program gets a run token. stash adds the real key on the way out, and only to that key's own site. For AWS, the profile sends each call through stash, and stash signs it.</p>
+  <p class="small"><b>Hand-over.</b> Database URLs, signing secrets and <span class="a">.env</span> files reach the program as real values, because the program needs them. stash prints them as <span class="a">****</span> in output. A program that wants to leak one still can, so keep every API key on the proxy.</p>
 
-  <h2>Give each agent its own token</h2>
-  <div class="codewrap"><pre><code>stash token create my-agent --role ro
-stash token rename my-agent builder
-stash token revoke my-agent
-stash audit                        <span class="c"># who read what, when</span></code></pre></div>
-  <p class="small">Roles: <span class="a">ro</span> reads, <span class="a">rw</span> reads and writes, <span class="a">admin</span> manages everything, <span class="a">proxy</span> reads nothing — see below.</p>
-
-  <h2>Proxy mode: the agent never sees the key</h2>
-  <div class="codewrap"><pre><code>stash route create openai --upstream https://api.openai.com --secret OPENAI_API_KEY
-stash token create my-agent --role proxy</code></pre></div>
-  <p class="small">Point the SDK at <span class="a">http://127.0.0.1:8555/proxy/openai/v1</span> with the proxy token as its API key. stash puts the real key on each request on the way out. A proxy token cannot read any secret.</p>
+  <h2>One setup, two tokens</h2>
+  <p class="small"><span class="a">stash setup</span> gives you the owner token once and sorts every secret into its path. Agents need nothing: the agent token works only through the stash program, so a copy in <span class="a">curl</span> does nothing. Each <span class="a">stash run</span> gets its own run token, which ends when the program exits.</p>
+  <div class="codewrap"><pre><code>stash aws connect my-profile --key-id MY_KEY_ID --secret-key MY_SECRET_KEY
+stash route create service --upstream https://api.example.com --secret SERVICE_KEY
+stash audit                        <span class="c"># who used what, when</span></code></pre></div>
 
   <h2>Notes</h2>
   <ul>
@@ -173,34 +166,18 @@ stash token create my-agent --role proxy</code></pre></div>
   </footer>
 </main>
 <script>
-  const LLM_TEXT = `Set up stash, a tiny open-source secrets store for AI agents (https://github.com/FatherMarz/stash), on this machine.
+  const LLM_TEXT = `Set up stash 0.5, a local secrets store for agents: https://github.com/FatherMarz/stash
 
-If stash is already installed, check its version with: stash version
-If it is older than 0.4.0, upgrade it instead of steps 1 to 6:
-   a. Stop the server and replace the binary. On macOS, copy the new file next to the old one and mv it over. A plain cp over the old file makes macOS kill the program.
-   b. Start the server again. Nothing locks until the owner password is set, so the upgrade breaks nothing.
-   c. Find every script that reads a raw value: stash get, or a direct call to /v1/secrets/NAME or /v1/env. Move each one to stash run. If a script must have the raw value (a credential helper, say), tell your user to run: stash open NAME
-   d. Tell your user to set the owner password (step 6), then go to step 7.
-
-1. Install it: go install github.com/FatherMarz/stash@latest
-   If Go is not installed, clone https://github.com/FatherMarz/stash and build with: CGO_ENABLED=0 go build -o stash .
-2. Start the server: stash serve
-   It listens on http://127.0.0.1:8555 and keeps data in ~/.stash/.
-3. The first start prints an admin token ONE time. Show it to your user and tell them to save it.
-4. Create a scoped token for yourself: STASH_TOKEN=<admin token> stash token create <your-name> --role rw
-   Roles: ro (read), rw (read/write), proxy (can only forward API calls, never reads secrets).
-5. To store a secret, do NOT ask the user to paste it into the chat. Tell them to run in their own terminal:
-   export STASH_TOKEN=<their token>; stash set NAME   (paste value, Enter, Ctrl-D)
-6. Tell your user to set the owner password in their own terminal: STASH_TOKEN=<admin token> stash password set
-   After that you cannot read a raw value, and you must never ask for that password.
-7. Run any command with all secrets injected as env vars: stash run -- <command>
-   Secret values in its output show as ****.
-   If a script must read one raw value, your user makes that secret open: stash open NAME
-   Any token can read an open secret. Do not read an open secret yourself.
-8. Proxy mode, so you never touch the key: stash route create <name> --upstream <api base url> --secret <SECRET_NAME>, then call http://127.0.0.1:8555/proxy/<name>/... with a proxy-role token as the API key.
-9. Install the agent skill so future sessions know all of this: cp -r skill/stash ~/.claude/skills/stash (from the repo).
-
-Full skill file: https://github.com/FatherMarz/stash/blob/main/skill/stash/SKILL.md`;
+1. Install: go install github.com/FatherMarz/stash@latest
+2. The human stops any running server and runs stash setup in their own terminal.
+   Setup shows the owner token once, stores the agent token for the CLI, and sorts every secret into a path.
+   Never ask for the owner token or print it in chat.
+3. Start stash serve. It listens on http://127.0.0.1:8555.
+4. The human stores keys with stash set NAME in their terminal.
+5. Agents run stash run -- COMMAND. API keys arrive as a run token in NAME plus NAME_BASE_URL.
+   Point the client at NAME_BASE_URL. AWS profiles set up with stash aws connect send calls through stash.
+   Other secrets arrive as values, printed as **** in output.
+6. Load the agent skill: https://github.com/FatherMarz/stash/blob/main/skill/stash/SKILL.md`;
 
   function flash(btn, label){
     const old = btn.textContent;

@@ -1,42 +1,30 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 )
 
-func TestEnvAnswersOnlyTheStashBinary(t *testing.T) {
+func TestEnvRequiresOwnerAndPassword(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent", "rw")
-	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v12345678"})
-
-	resp, _ := e.req(t, rw, "GET", "/v1/env", nil)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("env from another program = %d, want 403", resp.StatusCode)
+	e.st.Set("K", "v12345678")
+	agent := e.mustCreateToken(t, "agent", "agent")
+	for _, token := range []string{agent, e.admin} {
+		resp, _ := e.req(t, token, "GET", "/v1/env", nil)
+		if resp.StatusCode != 403 {
+			t.Fatalf("export without password = %d", resp.StatusCode)
+		}
 	}
-
-	orig := peerCheck
-	peerCheck = func(string, string) bool { return true }
-	t.Cleanup(func() { peerCheck = orig })
-	e2 := newTestEnv(t)
-	rw2 := e2.mustCreateToken(t, "agent", "rw")
-	e2.req(t, rw2, "PUT", "/v1/secrets/K", map[string]string{"value": "v12345678"})
-	resp, body := e2.req(t, rw2, "GET", "/v1/env", nil)
-	var env map[string]string
-	json.Unmarshal(body, &env)
-	if resp.StatusCode != http.StatusOK || env["K"] != "v12345678" {
-		t.Fatalf("env from stash = %d %s", resp.StatusCode, body)
+	resp, _ := e.reqPW(t, agent, testPW, "GET", "/v1/env", nil)
+	if resp.StatusCode != 403 {
+		t.Fatal("agent exported raw secrets with owner password")
 	}
 }
 
 func TestEnvWithOwnerPassword(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent", "rw")
+	rw := e.mustCreateToken(t, "agent", "owner")
 	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v12345678"})
 	resp, _ := e.reqPW(t, rw, testPW, "GET", "/v1/env", nil)
 	if resp.StatusCode != http.StatusOK {
@@ -63,7 +51,7 @@ func TestIsLoopback(t *testing.T) {
 
 func TestWrongPasswordLocksOut(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent", "rw")
+	rw := e.mustCreateToken(t, "agent", "owner")
 	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
 	for i := 0; i < guardMaxFails; i++ {
 		resp, _ := e.reqPW(t, rw, "guess", "GET", "/v1/secrets/K", nil)
@@ -79,7 +67,7 @@ func TestWrongPasswordLocksOut(t *testing.T) {
 
 func TestPasswordChangeRules(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent", "rw")
+	rw := e.mustCreateToken(t, "agent", "agent")
 
 	resp, _ := e.reqPW(t, rw, testPW, "PUT", "/v1/password", map[string]string{"password": "new-password"})
 	if resp.StatusCode != http.StatusForbidden {
@@ -103,7 +91,7 @@ func TestLockIsOffUntilPasswordSet(t *testing.T) {
 	if err := e.st.ClearPassword(); err != nil {
 		t.Fatal(err)
 	}
-	rw := e.mustCreateToken(t, "agent", "rw")
+	rw := e.mustCreateToken(t, "agent", "owner")
 	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
 	resp, body := e.req(t, rw, "GET", "/v1/secrets/K", nil)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "v1234") {
@@ -115,78 +103,9 @@ func TestLockIsOffUntilPasswordSet(t *testing.T) {
 	}
 }
 
-func TestOpenSecretSkipsPassword(t *testing.T) {
-	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent", "rw")
-	e.req(t, rw, "PUT", "/v1/secrets/HELPER", map[string]string{"value": "v1234"})
-
-	resp, _ := e.req(t, rw, "PUT", "/v1/open/HELPER", nil)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("rw open = %d, want 403", resp.StatusCode)
-	}
-	resp, _ = e.req(t, e.admin, "PUT", "/v1/open/HELPER", nil)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("admin open without password = %d, want 403", resp.StatusCode)
-	}
-	resp, _ = e.reqPW(t, e.admin, testPW, "PUT", "/v1/open/HELPER", nil)
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("admin open = %d", resp.StatusCode)
-	}
-	resp, body := e.req(t, rw, "GET", "/v1/secrets/HELPER", nil)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "v1234") {
-		t.Fatalf("read open secret = %d %s", resp.StatusCode, body)
-	}
-	resp, body = e.req(t, rw, "GET", "/v1/open", nil)
-	if !strings.Contains(string(body), "HELPER") {
-		t.Fatalf("open list = %s", body)
-	}
-	e.reqPW(t, e.admin, testPW, "DELETE", "/v1/open/HELPER", nil)
-	resp, _ = e.req(t, rw, "GET", "/v1/secrets/HELPER", nil)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("read closed secret = %d, want 403", resp.StatusCode)
-	}
-}
-
-// TestPeerCheckWithRealProcesses starts a copy of this test binary as the
-// client (it stands in for stash), then curl, against the real peer check.
-func TestPeerCheckWithRealProcesses(t *testing.T) {
-	if os.Getenv("STASH_TEST_CLIENT") != "" {
-		return
-	}
-	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent", "rw")
-	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v12345678"})
-
-	same := exec.Command(os.Args[0], "-test.run=^TestPeerClientHelper$")
-	same.Env = append(os.Environ(), "STASH_TEST_CLIENT="+e.srv.URL+"/v1/env", "STASH_TEST_TOKEN="+rw)
-	out, err := same.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "status=200") {
-		t.Fatalf("same program: %v %s", err, out)
-	}
-
-	curl, err := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Authorization: Bearer "+rw, e.srv.URL+"/v1/env").Output()
-	if err != nil || string(curl) != "403" {
-		t.Fatalf("curl = %s %v, want 403", curl, err)
-	}
-}
-
-func TestPeerClientHelper(t *testing.T) {
-	url := os.Getenv("STASH_TEST_CLIENT")
-	if url == "" {
-		t.Skip("helper process only")
-	}
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("STASH_TEST_TOKEN"))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Printf("status=%d\n", resp.StatusCode)
-}
-
 func TestMissingPasswordDoesNotLockOut(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent", "rw")
+	rw := e.mustCreateToken(t, "agent", "owner")
 	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
 	for i := 0; i < guardMaxFails*3; i++ {
 		resp, body := e.req(t, rw, "GET", "/v1/secrets/K", nil)
@@ -206,7 +125,7 @@ func TestMissingPasswordDoesNotLockOut(t *testing.T) {
 
 func TestGroupsFollowSecrets(t *testing.T) {
 	e := newTestEnv(t)
-	rw := e.mustCreateToken(t, "agent", "rw")
+	rw := e.mustCreateToken(t, "agent", "owner")
 	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
 	resp, _ := e.req(t, rw, "PUT", "/v1/groups/K", map[string]string{"group": "Client work"})
 	if resp.StatusCode != http.StatusNoContent {

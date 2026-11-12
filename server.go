@@ -11,71 +11,95 @@ import (
 	"strings"
 )
 
-// peerCheck is a variable so tests can stand in for the stash binary.
-var peerCheck = peerIsStash
-
 type server struct {
 	st    *Store
 	guard guard
-	// peerCheck reports whether the local client is the stash binary.
-	peerCheck func(remoteAddr, localAddr string) bool
+	runs  runSessions
+	// peerOK reports whether the caller is the stash program itself. Agent
+	// tokens only work through it, so a token copied into curl does nothing.
+	peerOK func(*http.Request) bool
+}
+
+// peerCheck is a variable so tests can stand in for the stash program.
+var peerCheck = callerIsStash
+
+func callerIsStash(r *http.Request) bool {
+	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	return ok && peerIsStash(r.RemoteAddr, local.String())
 }
 
 func newMux(st *Store) *http.ServeMux {
-	s := &server{st: st, peerCheck: peerCheck}
+	s := &server{st: st, runs: runSessions{leases: make(map[string]runLease)}, peerOK: peerCheck}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
-	mux.HandleFunc("GET /v1/secrets", s.auth("ro", s.listSecrets))
-	mux.HandleFunc("GET /v1/secrets/{name}", s.auth("ro", s.getSecret))
-	mux.HandleFunc("PUT /v1/secrets/{name}", s.auth("rw", s.putSecret))
-	mux.HandleFunc("DELETE /v1/secrets/{name}", s.auth("rw", s.deleteSecret))
-	mux.HandleFunc("POST /v1/secrets/{name}/rename", s.auth("rw", s.renameSecret))
-	mux.HandleFunc("GET /v1/env", s.auth("ro", s.envSecrets))
-	mux.HandleFunc("GET /v1/groups", s.auth("ro", s.listGroups))
-	mux.HandleFunc("PUT /v1/groups/{name}", s.auth("rw", s.setGroup))
-	mux.HandleFunc("GET /v1/open", s.auth("ro", s.listOpen))
-	mux.HandleFunc("PUT /v1/open/{name}", s.auth("admin", s.setOpen(true)))
-	mux.HandleFunc("DELETE /v1/open/{name}", s.auth("admin", s.setOpen(false)))
-	mux.HandleFunc("GET /v1/password", s.auth("admin", s.passwordStatus))
-	mux.HandleFunc("PUT /v1/password", s.auth("admin", s.setPassword))
-	mux.HandleFunc("POST /v1/tokens", s.auth("admin", s.createToken))
-	mux.HandleFunc("GET /v1/tokens", s.auth("admin", s.listTokens))
-	mux.HandleFunc("DELETE /v1/tokens/{name}", s.auth("admin", s.revokeToken))
-	mux.HandleFunc("POST /v1/tokens/{name}/rename", s.auth("admin", s.renameToken))
-	mux.HandleFunc("GET /v1/audit", s.auth("admin", s.listAudit))
-	mux.HandleFunc("POST /v1/routes", s.auth("admin", s.createRoute))
-	mux.HandleFunc("GET /v1/routes", s.auth("admin", s.listRoutes))
-	mux.HandleFunc("DELETE /v1/routes/{name}", s.auth("admin", s.deleteRoute))
-	mux.HandleFunc("/proxy/{route}", s.auth("proxy", s.proxyRequest))
-	mux.HandleFunc("/proxy/{route}/{rest...}", s.auth("proxy", s.proxyRequest))
+	mux.HandleFunc("GET /v1/secrets", s.auth("agent", s.listSecrets))
+	mux.HandleFunc("GET /v1/secrets/{name}", s.auth("owner", s.getSecret))
+	mux.HandleFunc("PUT /v1/secrets/{name}", s.auth("agent", s.putSecret))
+	mux.HandleFunc("DELETE /v1/secrets/{name}", s.auth("owner", s.deleteSecret))
+	mux.HandleFunc("POST /v1/secrets/{name}/rename", s.auth("owner", s.renameSecret))
+	mux.HandleFunc("GET /v1/env", s.auth("owner", s.envSecrets))
+	mux.HandleFunc("POST /v1/run", s.auth("agent", s.runSession))
+	mux.HandleFunc("DELETE /v1/run", s.auth("agent", s.revokeRun))
+	mux.HandleFunc("POST /v1/run/renew", s.auth("agent", s.renewRun))
+	mux.HandleFunc("GET /v1/groups", s.auth("agent", s.listGroups))
+	mux.HandleFunc("PUT /v1/groups/{name}", s.auth("owner", s.setGroup))
+	mux.HandleFunc("GET /v1/password", s.auth("owner", s.passwordStatus))
+	mux.HandleFunc("PUT /v1/password", s.auth("owner", s.setPassword))
+	mux.HandleFunc("POST /v1/tokens", s.auth("owner", s.createToken))
+	mux.HandleFunc("GET /v1/tokens", s.auth("owner", s.listTokens))
+	mux.HandleFunc("DELETE /v1/tokens/{name}", s.auth("owner", s.revokeToken))
+	mux.HandleFunc("POST /v1/tokens/{name}/rename", s.auth("owner", s.renameToken))
+	mux.HandleFunc("GET /v1/audit", s.auth("owner", s.listAudit))
+	mux.HandleFunc("POST /v1/routes", s.auth("owner", s.createRoute))
+	mux.HandleFunc("GET /v1/routes", s.auth("agent", s.listRoutes))
+	mux.HandleFunc("DELETE /v1/routes/{name}", s.auth("owner", s.deleteRoute))
+	mux.HandleFunc("/proxy/{route}", s.auth("agent", s.proxyRequest))
+	mux.HandleFunc("/proxy/{route}/{rest...}", s.auth("agent", s.proxyRequest))
+	mux.HandleFunc("POST /v1/aws/{route}", s.auth("agent", s.awsSession))
+	mux.HandleFunc("/aws/{route}/{rest...}", s.auth("agent", s.awsRequest))
+	mux.HandleFunc("/aws/{route}", s.auth("agent", s.awsRequest))
 	return mux
 }
 
-// roleAllows reports whether a token role satisfies the required role.
-// admin > rw > ro > proxy. A proxy token can only use /proxy routes, so an
-// agent holding one can never read a raw secret.
+// Owners manage the store. Agents can only discover names and use proxies.
 func roleAllows(have, need string) bool {
-	rank := map[string]int{"proxy": 1, "ro": 2, "rw": 3, "admin": 4}
-	return rank[have] >= rank[need]
+	return (have == "owner" && (need == "owner" || need == "agent")) || (have == "agent" && need == "agent")
+}
+
+func requestToken(r *http.Request) string {
+	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
+		return strings.TrimPrefix(header, "Bearer ")
+	}
+	if strings.HasPrefix(r.URL.Path, "/proxy/") {
+		return r.Header.Get("X-Api-Key")
+	}
+	if strings.HasPrefix(r.URL.Path, "/aws/") {
+		return r.Header.Get("X-Amz-Security-Token")
+	}
+	return ""
 }
 
 func (s *server) auth(need string, h func(http.ResponseWriter, *http.Request, *Token)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		plain := strings.TrimPrefix(header, "Bearer ")
-		if plain == "" || plain == header {
+		plain := requestToken(r)
+		if plain == "" {
 			writeErr(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		tok, err := s.st.VerifyToken(plain)
+		tok, err := s.tokenForRequest(plain)
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "invalid token")
+			writeErr(w, http.StatusUnauthorized, "invalid or old token; stash 0.5 requires a new owner or agent token from stash setup")
 			return
 		}
-		if !roleAllows(tok.Role, need) {
+		run := strings.HasPrefix(plain, "stash_run_")
+		if !roleAllows(tok.Role, need) || (run && !(strings.HasPrefix(r.URL.Path, "/proxy/") || strings.HasPrefix(r.URL.Path, "/aws/") || (r.Method == "DELETE" && r.URL.Path == "/v1/run") || (r.Method == "POST" && r.URL.Path == "/v1/run/renew"))) {
 			writeErr(w, http.StatusForbidden, "token role does not allow this operation")
+			return
+		}
+		if tok.Role == "agent" && !run && !s.peerOK(r) {
+			writeErr(w, http.StatusForbidden, "the agent token works only through the stash command. Use stash run")
 			return
 		}
 		h(w, r, tok)
@@ -92,17 +116,17 @@ func (s *server) listSecrets(w http.ResponseWriter, r *http.Request, tok *Token)
 	if names == nil {
 		names = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string][]string{"secrets": names})
-}
-
-func (s *server) getSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
-	name := r.PathValue("name")
-	open, err := s.st.IsOpen(name)
+	routes, err := s.st.ListRoutes()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !open && !s.ownerPassword(w, r, tok, name) {
+	writeJSON(w, http.StatusOK, map[string]any{"secrets": names, "paths": secretPaths(names, routes)})
+}
+
+func (s *server) getSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
+	name := r.PathValue("name")
+	if !s.ownerPassword(w, r, tok, name) {
 		return
 	}
 	value, err := s.st.Get(name)
@@ -186,6 +210,12 @@ func (s *server) putSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
 		writeErr(w, http.StatusBadRequest, `body must be JSON: {"value": "..."}`)
 		return
 	}
+	if tok.Role != "owner" {
+		if _, err := s.st.Get(name); err == nil {
+			writeErr(w, http.StatusForbidden, "only the owner can change an existing secret")
+			return
+		}
+	}
 	if err := s.st.Set(name, body.Value); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -232,12 +262,9 @@ func (s *server) renameSecret(w http.ResponseWriter, r *http.Request, tok *Token
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// envSecrets returns every value for `stash run`. It answers the stash
-// binary on this machine, or anyone with the owner password.
+// envSecrets is an owner-only export guarded by the owner password.
 func (s *server) envSecrets(w http.ResponseWriter, r *http.Request, tok *Token) {
-	local, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
-	isStash := local != nil && s.peerCheck(r.RemoteAddr, local.String())
-	if !isStash && !s.ownerPassword(w, r, tok, "") {
+	if !s.ownerPassword(w, r, tok, "") {
 		return
 	}
 	all, err := s.st.All()
@@ -281,36 +308,6 @@ func (s *server) setGroup(w http.ResponseWriter, r *http.Request, tok *Token) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) listOpen(w http.ResponseWriter, r *http.Request, tok *Token) {
-	names, err := s.st.ListOpen()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string][]string{"open": names})
-}
-
-// setOpen opens or closes one secret. It needs an admin token and the owner
-// password.
-func (s *server) setOpen(open bool) func(http.ResponseWriter, *http.Request, *Token) {
-	return func(w http.ResponseWriter, r *http.Request, tok *Token) {
-		name := r.PathValue("name")
-		if !s.ownerPassword(w, r, tok, name) {
-			return
-		}
-		if err := s.st.SetOpen(name, open); err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		action := "close"
-		if open {
-			action = "open"
-		}
-		s.st.Audit(tok.Name, action, name)
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
 func (s *server) createToken(w http.ResponseWriter, r *http.Request, tok *Token) {
 	var body struct {
 		Name string `json:"name"`
@@ -318,11 +315,11 @@ func (s *server) createToken(w http.ResponseWriter, r *http.Request, tok *Token)
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, `body must be JSON: {"name": "...", "role": "ro|rw|admin"}`)
+		writeErr(w, http.StatusBadRequest, `body must be JSON: {"name": "...", "role": "owner|agent"}`)
 		return
 	}
 	if body.Role == "" {
-		body.Role = "rw"
+		body.Role = "agent"
 	}
 	plain, err := s.st.NewToken(body.Name, body.Role)
 	if err != nil {
@@ -442,7 +439,11 @@ func (s *server) deleteRoute(w http.ResponseWriter, r *http.Request, tok *Token)
 // secret injected as a header. The caller's stash token never leaves this
 // server, and the secret never reaches the caller.
 func (s *server) proxyRequest(w http.ResponseWriter, r *http.Request, tok *Token) {
-	rt, err := s.st.GetRoute(r.PathValue("route"))
+	if !s.runAllows(requestToken(r), r.PathValue("route")) {
+		writeErr(w, http.StatusForbidden, "route is outside this run's scope")
+		return
+	}
+	rt, err := s.routeForRequest(requestToken(r), r.PathValue("route"))
 	if errors.Is(err, ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "route not found")
 		return
@@ -478,11 +479,16 @@ func (s *server) proxyRequest(w http.ResponseWriter, r *http.Request, tok *Token
 			pr.SetURL(upstream)
 			pr.Out.Host = upstream.Host
 			pr.Out.Header.Del("Authorization") // never forward the stash token
+			pr.Out.Header.Del("X-Api-Key")
+			pr.Out.Header.Set("Accept-Encoding", "identity")
 			pr.Out.Header.Set(strings.TrimSpace(headerName), headerValue)
+		},
+		ModifyResponse: func(response *http.Response) error {
+			return protectProxyResponse(response, []string{value, headerValue, requestToken(r)})
 		},
 		FlushInterval: -1, // stream responses (SSE from LLM APIs) immediately
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			writeErr(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
+			writeErr(w, http.StatusBadGateway, "upstream request failed")
 		},
 	}
 	s.st.Audit(tok.Name, "proxy", rt.Name)

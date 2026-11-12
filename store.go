@@ -38,19 +38,23 @@ var nameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,199}$`)
 // Token is an API credential. Only its SHA-256 hash is stored.
 type Token struct {
 	Name    string    `json:"name"`
-	Role    string    `json:"role"` // "proxy", "ro", "rw", or "admin"
+	Role    string    `json:"role"` // "owner" or "agent"
 	Created time.Time `json:"created"`
 }
 
 // Route forwards agent requests to an upstream API with the real secret
-// injected as a header. Agents with a "proxy" token can use routes but can
+// injected as a header. Agents with an agent token can use routes but can
 // never read the secret itself.
 type Route struct {
-	Name     string    `json:"name"`
-	Upstream string    `json:"upstream"` // e.g. https://api.openai.com
-	Secret   string    `json:"secret"`   // name of the secret to inject
-	Header   string    `json:"header"`   // e.g. "Authorization: Bearer {value}"
-	Created  time.Time `json:"created"`
+	Name     string `json:"name"`
+	Upstream string `json:"upstream"` // e.g. https://api.openai.com
+	Secret   string `json:"secret"`   // name of the secret to inject
+	Header   string `json:"header"`   // e.g. "Authorization: Bearer {value}"
+	// Kind "aws" signs AWS calls with a key pair: KeyID names the access key
+	// ID secret and Secret names the secret access key.
+	Kind    string    `json:"kind,omitempty"`
+	KeyID   string    `json:"key_id,omitempty"`
+	Created time.Time `json:"created"`
 }
 
 type AuditEntry struct {
@@ -239,7 +243,7 @@ func (s *Store) Delete(name string) error {
 	})
 }
 
-// Rename moves a secret to a new name. Its group, open state, and any
+// Rename moves a secret to a new name. Its group and any
 // proxy routes that inject it follow it to the new name.
 func (s *Store) Rename(oldName, newName string) error {
 	if err := validName(newName); err != nil {
@@ -274,10 +278,15 @@ func (s *Store) Rename(oldName, newName string) error {
 		updates := map[string][]byte{}
 		err := rb.ForEach(func(k, v []byte) error {
 			var r Route
-			if json.Unmarshal(v, &r) != nil || r.Secret != oldName {
+			if json.Unmarshal(v, &r) != nil || (r.Secret != oldName && r.KeyID != oldName) {
 				return nil
 			}
-			r.Secret = newName
+			if r.Secret == oldName {
+				r.Secret = newName
+			}
+			if r.KeyID == oldName {
+				r.KeyID = newName
+			}
 			rec, err := json.Marshal(r)
 			if err != nil {
 				return err
@@ -341,15 +350,15 @@ func (s *Store) NewToken(name, role string) (string, error) {
 		return "", err
 	}
 	switch role {
-	case "proxy", "ro", "rw", "admin":
+	case "owner", "agent":
 	default:
-		return "", errors.New(`role must be "proxy", "ro", "rw", or "admin"`)
+		return "", errors.New(`role must be "owner" or "agent"`)
 	}
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
-	plain := "stash_" + hex.EncodeToString(raw)
+	plain := "stash_" + role + "_" + hex.EncodeToString(raw)
 	rec, err := json.Marshal(Token{Name: name, Role: role, Created: time.Now().UTC()})
 	if err != nil {
 		return "", err
@@ -385,6 +394,9 @@ func (s *Store) VerifyToken(plain string) (*Token, error) {
 		var t Token
 		if err := json.Unmarshal(v, &t); err != nil {
 			return err
+		}
+		if t.Role != "owner" && t.Role != "agent" {
+			return ErrNotFound
 		}
 		tok = &t
 		return nil
@@ -466,46 +478,62 @@ func (s *Store) RenameToken(oldName, newName string) error {
 	})
 }
 
-// EnsureAdmin creates the "admin" token on first run. It returns the
+// EnsureOwner creates the owner token during terminal setup. It returns the
 // plaintext token and true when it created one.
-func (s *Store) EnsureAdmin() (string, bool, error) {
+func (s *Store) EnsureOwner() (string, bool, error) {
 	toks, err := s.ListTokens()
 	if err != nil {
 		return "", false, err
 	}
 	for _, t := range toks {
-		if t.Role == "admin" {
+		if t.Role == "owner" {
 			return "", false, nil
 		}
 	}
-	plain, err := s.NewToken("admin", "admin")
+	plain, err := s.NewToken("owner", "owner")
 	if err != nil {
 		return "", false, err
 	}
 	return plain, true, nil
 }
 
-// ResetAdmin revokes every admin token and creates a new one. It is an
-// offline recovery path for a lost admin token.
-func (s *Store) ResetAdmin() (string, error) {
+// ResetOwner revokes owner tokens and creates a new one for offline recovery.
+func (s *Store) ResetOwner() (string, error) {
 	toks, err := s.ListTokens()
 	if err != nil {
 		return "", err
 	}
 	for _, t := range toks {
-		if t.Role == "admin" {
+		if t.Role == "owner" {
 			if err := s.RevokeToken(t.Name); err != nil {
 				return "", err
 			}
 		}
 	}
-	return s.NewToken("admin", "admin")
+	return s.NewToken("owner", "owner")
 }
 
 // SetRoute creates or overwrites a proxy route.
 func (s *Store) SetRoute(r Route) error {
 	if err := validName(r.Name); err != nil {
 		return err
+	}
+	if r.Kind == "aws" {
+		if r.KeyID == "" || r.Secret == "" {
+			return errors.New("an AWS connection needs the key ID secret and the secret key secret")
+		}
+		r.Upstream, r.Header = "", ""
+		r.Created = time.Now().UTC()
+		rec, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		return s.db.Update(func(tx *bolt.Tx) error {
+			return tx.Bucket(bucketRoutes).Put([]byte(r.Name), rec)
+		})
+	}
+	if r.Kind != "" {
+		return errors.New(`route kind must be empty or "aws"`)
 	}
 	u, err := url.Parse(r.Upstream)
 	if err != nil || u.Scheme == "" || u.Host == "" {

@@ -109,7 +109,7 @@ func TestMasterKeyReuse(t *testing.T) {
 func TestTokens(t *testing.T) {
 	st := openTestStore(t)
 
-	plain, err := st.NewToken("agent-1", "rw")
+	plain, err := st.NewToken("agent-1", "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,11 @@ func TestTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tok.Name != "agent-1" || tok.Role != "rw" {
+	if tok.Name != "agent-1" || tok.Role != "owner" {
 		t.Fatalf("token = %+v", tok)
 	}
 
-	if _, err := st.NewToken("agent-1", "ro"); err == nil {
+	if _, err := st.NewToken("agent-1", "agent"); err == nil {
 		t.Fatal("duplicate token name was accepted")
 	}
 	if _, err := st.NewToken("agent-2", "boss"); err == nil {
@@ -131,7 +131,7 @@ func TestTokens(t *testing.T) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 
-	if _, err := st.NewToken("agent-2", "ro"); err != nil {
+	if _, err := st.NewToken("agent-2", "agent"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.RenameToken("agent-1", "agent-2"); err == nil {
@@ -143,7 +143,7 @@ func TestTokens(t *testing.T) {
 	if err := st.RenameToken("agent-1", "builder"); err != nil {
 		t.Fatal(err)
 	}
-	if tok, err := st.VerifyToken(plain); err != nil || tok.Name != "builder" || tok.Role != "rw" {
+	if tok, err := st.VerifyToken(plain); err != nil || tok.Name != "builder" || tok.Role != "owner" {
 		t.Fatalf("after rename: %+v %v", tok, err)
 	}
 
@@ -155,19 +155,19 @@ func TestTokens(t *testing.T) {
 	}
 }
 
-func TestEnsureAndResetAdmin(t *testing.T) {
+func TestEnsureAndResetOwner(t *testing.T) {
 	st := openTestStore(t)
 
-	plain, created, err := st.EnsureAdmin()
+	plain, created, err := st.EnsureOwner()
 	if err != nil || !created || plain == "" {
-		t.Fatalf("EnsureAdmin = %q, %v, %v", plain, created, err)
+		t.Fatalf("EnsureOwner = %q, %v, %v", plain, created, err)
 	}
-	_, created, err = st.EnsureAdmin()
+	_, created, err = st.EnsureOwner()
 	if err != nil || created {
-		t.Fatalf("second EnsureAdmin created another admin: %v, %v", created, err)
+		t.Fatalf("second EnsureOwner created another admin: %v, %v", created, err)
 	}
 
-	fresh, err := st.ResetAdmin()
+	fresh, err := st.ResetOwner()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,6 @@ func TestRenameSecret(t *testing.T) {
 	st.Set("old.key", "v1")
 	st.Set("taken", "v2")
 	st.SetGroup("old.key", "Work")
-	st.SetOpen("old.key", true)
 	st.SetRoute(Route{Name: "api", Upstream: "https://example.com", Secret: "old.key", Header: "Authorization: Bearer {value}"})
 
 	if err := st.Rename("old.key", "taken"); err == nil {
@@ -236,12 +235,6 @@ func TestRenameSecret(t *testing.T) {
 	}
 	if g, _ := st.Groups(); g["new.key"] != "Work" || g["old.key"] != "" {
 		t.Fatalf("groups = %v", g)
-	}
-	if open, _ := st.IsOpen("new.key"); !open {
-		t.Fatal("open state did not follow the rename")
-	}
-	if open, _ := st.IsOpen("old.key"); open {
-		t.Fatal("old name is still open")
 	}
 	if r, _ := st.GetRoute("api"); r.Secret != "new.key" {
 		t.Fatalf("route secret = %q", r.Secret)

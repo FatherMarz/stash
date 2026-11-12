@@ -16,43 +16,46 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "0.4.0"
+const version = "0.5.0"
 
 const usageText = `stash — a small secrets store for agents and scripts
 
 Server:
+  stash setup [--data DIR]           one-time setup in your terminal, server stopped
   stash serve [--addr 127.0.0.1:8555] [--data DIR] [--tls-cert F --tls-key F]
-  stash reset-admin [--data DIR]     make a new admin token (offline recovery)
+  stash reset-owner [--data DIR]     make a new owner token (offline recovery)
   stash reset-password [--data DIR]  remove the owner password (offline recovery)
 
 Secrets (need STASH_TOKEN, and STASH_ADDR if not local):
   stash set NAME [VALUE]             VALUE from stdin when omitted
   stash get NAME                     print a value (asks for the owner password)
-  stash list
+  stash list                         each secret and how it reaches a program
   stash ui                           browse, search, and edit secrets on one screen
   stash rename OLD NEW
   stash delete NAME
-  stash run [--] COMMAND [ARGS...]   run a command with all secrets as env vars,
-                                     secret values in its output show as ****
+  stash run [--secret NAME ...] [--] COMMAND [ARGS...]
+                                     run with secrets: API keys by proxy, the rest
+                                     as values printed as ****
 
-Owner password (need an admin STASH_TOKEN and a terminal):
+Owner password (need an owner STASH_TOKEN and a terminal):
   stash password set                 set or change the password that guards reads
-  stash open                         list secrets any token can read without it
-  stash open NAME [--data DIR]       let programs read NAME without the password
-  stash close NAME [--data DIR]      lock NAME again
                                      (--data works offline, with the server stopped)
 
-Tokens (need an admin STASH_TOKEN):
-  stash token create NAME [--role proxy|ro|rw|admin]
+Tokens (need an owner STASH_TOKEN):
+  stash token create NAME [--role agent|owner]
   stash token list
   stash token rename OLD NEW         same token value, new name
   stash token revoke NAME
   stash audit [--limit N]
 
-Proxy routes (need an admin STASH_TOKEN):
+Proxy routes (need an owner STASH_TOKEN):
   stash route create NAME --upstream URL --secret SECRET [--header "H: p {value}"]
   stash route list
   stash route delete NAME
+
+AWS (the key pair stays in stash, stash signs each call):
+  stash aws connect PROFILE --key-id SECRET --secret-key SECRET
+  stash aws creds PROFILE            the profile's credential_process
 
 Other:
   stash version
@@ -76,10 +79,12 @@ func main() {
 	cmd, rest := args[0], args[1:]
 	var err error
 	switch cmd {
+	case "setup":
+		err = cmdSetup(rest)
 	case "serve":
 		err = cmdServe(rest)
-	case "reset-admin":
-		err = cmdResetAdmin(rest)
+	case "reset-owner":
+		err = cmdResetOwner(rest)
 	case "set":
 		err = cmdSet(rest)
 	case "get":
@@ -96,14 +101,12 @@ func main() {
 		err = cmdPassword(rest)
 	case "ui":
 		err = cmdUI(rest)
-	case "open":
-		err = cmdOpen(rest, true)
-	case "close":
-		err = cmdOpen(rest, false)
 	case "reset-password":
 		err = cmdResetPassword(rest)
 	case "token":
 		err = cmdToken(rest)
+	case "aws":
+		err = cmdAWS(rest)
 	case "route":
 		err = cmdRoute(rest)
 	case "audit":
@@ -118,6 +121,10 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
+		var childExit *commandExit
+		if errors.As(err, &childExit) {
+			os.Exit(childExit.code)
+		}
 		log.Fatalf("stash: %v", err)
 	}
 }
@@ -136,12 +143,18 @@ func cmdServe(args []string) error {
 	}
 	defer st.Close()
 
-	admin, created, err := st.EnsureAdmin()
+	tokens, err := st.ListTokens()
 	if err != nil {
 		return err
 	}
-	if created {
-		fmt.Printf("admin token (shown once, save it now): %s\n", admin)
+	hasOwner := false
+	for _, token := range tokens {
+		if token.Role == "owner" {
+			hasOwner = true
+		}
+	}
+	if !hasOwner {
+		return errors.New("new owner and agent tokens required: stop stash, run stash setup in your terminal, then start stash again")
 	}
 	if *tlsCert == "" || *tlsKey == "" {
 		host, _, splitErr := net.SplitHostPort(*addr)
@@ -161,8 +174,11 @@ func cmdServe(args []string) error {
 	return http.ListenAndServe(*addr, mux)
 }
 
-func cmdResetAdmin(args []string) error {
-	fs := flag.NewFlagSet("reset-admin", flag.ExitOnError)
+func cmdResetOwner(args []string) error {
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return errors.New("run stash reset-owner in your own terminal")
+	}
+	fs := flag.NewFlagSet("reset-owner", flag.ExitOnError)
 	data := fs.String("data", defaultDataDir(), "data directory")
 	fs.Parse(args)
 
@@ -171,11 +187,11 @@ func cmdResetAdmin(args []string) error {
 		return err
 	}
 	defer st.Close()
-	plain, err := st.ResetAdmin()
+	plain, err := st.ResetOwner()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("new admin token (shown once, save it now): %s\n", plain)
+	fmt.Printf("new owner token (shown once, save it now): %s\n", plain)
 	return nil
 }
 
@@ -236,13 +252,20 @@ func cmdGet(args []string) error {
 func cmdList(args []string) error {
 	c := newClient()
 	var out struct {
-		Secrets []string `json:"secrets"`
+		Secrets []string          `json:"secrets"`
+		Paths   map[string]string `json:"paths"`
 	}
 	if err := c.do("GET", "/v1/secrets", nil, &out); err != nil {
 		return err
 	}
+	// Scripts read one name per line. A person also sees each secret's path.
+	tty := term.IsTerminal(int(os.Stdout.Fd()))
 	for _, n := range out.Secrets {
-		fmt.Println(n)
+		if tty && out.Paths[n] != "" {
+			fmt.Printf("%-44s %s\n", n, out.Paths[n])
+		} else {
+			fmt.Println(n)
+		}
 	}
 	return nil
 }
@@ -304,57 +327,6 @@ func cmdPassword(args []string) error {
 	return c.do("PUT", "/v1/password", map[string]string{"password": pw}, nil)
 }
 
-func cmdOpen(args []string, open bool) error {
-	fs := flag.NewFlagSet("open", flag.ExitOnError)
-	data := fs.String("data", "", "data directory, to change it offline")
-	var name string
-	var flags []string
-	for _, a := range args {
-		if name == "" && !strings.HasPrefix(a, "-") && len(flags)%2 == 0 {
-			name = a
-			continue
-		}
-		flags = append(flags, a)
-	}
-	fs.Parse(flags)
-	if name == "" {
-		if !open {
-			return errors.New("usage: stash close NAME [--data DIR]")
-		}
-		var out struct {
-			Open []string `json:"open"`
-		}
-		if err := newClient().do("GET", "/v1/open", nil, &out); err != nil {
-			return err
-		}
-		for _, n := range out.Open {
-			fmt.Println(n)
-		}
-		return nil
-	}
-	if *data != "" {
-		st, err := OpenStore(*data)
-		if err != nil {
-			return err
-		}
-		defer st.Close()
-		return st.SetOpen(name, open)
-	}
-	c := newClient()
-	method := "PUT"
-	if !open {
-		method = "DELETE"
-	}
-	err := c.do(method, "/v1/open/"+name, nil, nil)
-	if isPasswordErr(err) {
-		if c.password, err = readPassword("owner password: "); err != nil {
-			return err
-		}
-		err = c.do(method, "/v1/open/"+name, nil, nil)
-	}
-	return err
-}
-
 func cmdResetPassword(args []string) error {
 	fs := flag.NewFlagSet("reset-password", flag.ExitOnError)
 	data := fs.String("data", defaultDataDir(), "data directory")
@@ -381,7 +353,7 @@ func cmdToken(args []string) error {
 	switch sub {
 	case "create":
 		fs := flag.NewFlagSet("token create", flag.ExitOnError)
-		role := fs.String("role", "rw", "token role: proxy, ro, rw, or admin")
+		role := fs.String("role", "agent", "token role: agent or owner")
 		// allow "stash token create NAME --role ro" and "--role ro NAME"
 		var name string
 		var flags []string
@@ -397,7 +369,7 @@ func cmdToken(args []string) error {
 			name = fs.Arg(0)
 		}
 		if name == "" {
-			return errors.New("usage: stash token create NAME [--role proxy|ro|rw|admin]")
+			return errors.New("usage: stash token create NAME [--role agent|owner]")
 		}
 		var out struct {
 			Token string `json:"token"`

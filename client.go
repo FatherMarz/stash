@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -25,9 +27,16 @@ func newClient() *client {
 	if addr == "" {
 		addr = "http://127.0.0.1:8555"
 	}
+	token := os.Getenv("STASH_TOKEN")
+	// Setup manages the default agent token. Old token formats no longer work.
+	if !strings.HasPrefix(token, "stash_owner_") && !strings.HasPrefix(token, "stash_agent_") && !strings.HasPrefix(token, "stash_run_") {
+		if data, err := os.ReadFile(filepath.Join(defaultDataDir(), "agent.token")); err == nil {
+			token = strings.TrimSpace(string(data))
+		}
+	}
 	return &client{
 		addr:  addr,
-		token: os.Getenv("STASH_TOKEN"),
+		token: token,
 		http:  &http.Client{Timeout: 10 * time.Second},
 	}
 }
