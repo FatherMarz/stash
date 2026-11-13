@@ -143,9 +143,10 @@ func TestRunSessionScopesProxyWithoutReadingValues(t *testing.T) {
 	}
 }
 
-func TestRunSessionHandsOverUnroutedAndRevokesWithParent(t *testing.T) {
+func TestRunSessionHandsOverApprovedDirectAndRevokesWithParent(t *testing.T) {
 	e := newTestEnv(t)
 	e.st.Set("KEY", "handed-over-value")
+	e.st.SetRoute(Route{Name: "direct-key", Secret: "KEY", Kind: "direct"})
 	ro := e.mustCreateToken(t, "runner", "agent")
 	resp, body := e.req(t, ro, "POST", "/v1/run", map[string]any{"secrets": []string{"KEY"}})
 	var handed runSetup
@@ -153,8 +154,9 @@ func TestRunSessionHandsOverUnroutedAndRevokesWithParent(t *testing.T) {
 	if resp.StatusCode != 201 || handed.Values["KEY"] != "handed-over-value" {
 		t.Fatalf("hand-over = %d %s", resp.StatusCode, body)
 	}
+	e.st.DeleteRoute("direct-key")
 	e.st.SetRoute(Route{Name: "api", Secret: "KEY", Upstream: "https://example.invalid"})
-	resp, body = e.req(t, ro, "POST", "/v1/run", map[string]any{})
+	resp, body = e.req(t, ro, "POST", "/v1/run", map[string]any{"secrets": []string{"KEY"}})
 	if resp.StatusCode != 201 {
 		t.Fatalf("setup = %d %s", resp.StatusCode, body)
 	}
@@ -196,8 +198,9 @@ func TestProxyEnvironmentRemovesParentAuthorityAndAmbientSecrets(t *testing.T) {
 func TestRunTokenRenews(t *testing.T) {
 	e := newTestEnv(t)
 	e.st.Set("DB_URL", "postgres://x")
+	e.st.SetRoute(Route{Name: "database", Secret: "DB_URL", Kind: "direct"})
 	agent := e.mustCreateToken(t, "agent", "agent")
-	_, body := e.req(t, agent, "POST", "/v1/run", map[string]any{})
+	_, body := e.req(t, agent, "POST", "/v1/run", map[string]any{"secrets": []string{"DB_URL"}})
 	var setup runSetup
 	json.Unmarshal(body, &setup)
 	if resp, _ := e.req(t, setup.Token, "POST", "/v1/run/renew", nil); resp.StatusCode != 204 {

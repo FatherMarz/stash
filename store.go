@@ -42,16 +42,16 @@ type Token struct {
 	Created time.Time `json:"created"`
 }
 
-// Route forwards agent requests to an upstream API with the real secret
-// injected as a header. Agents with an agent token can use routes but can
-// never read the secret itself.
+// Route records an owner-approved API proxy, AWS signer, or direct handover.
+// Only a direct connection permits a run to receive a real value.
 type Route struct {
 	Name     string `json:"name"`
 	Upstream string `json:"upstream"` // e.g. https://api.openai.com
 	Secret   string `json:"secret"`   // name of the secret to inject
 	Header   string `json:"header"`   // e.g. "Authorization: Bearer {value}"
 	// Kind "aws" signs AWS calls with a key pair: KeyID names the access key
-	// ID secret and Secret names the secret access key.
+	// ID secret and Secret names the secret access key. Kind "direct" explicitly
+	// approves returning Secret to a selected child program.
 	Kind    string    `json:"kind,omitempty"`
 	KeyID   string    `json:"key_id,omitempty"`
 	Created time.Time `json:"created"`
@@ -513,37 +513,45 @@ func (s *Store) ResetOwner() (string, error) {
 	return s.NewToken("owner", "owner")
 }
 
-// SetRoute creates or overwrites a proxy route.
+// SetRoute creates or replaces an owner-approved connection.
 func (s *Store) SetRoute(r Route) error {
 	if err := validName(r.Name); err != nil {
 		return err
 	}
-	if r.Kind == "aws" {
-		if r.KeyID == "" || r.Secret == "" {
+	if err := validName(r.Secret); err != nil {
+		return fmt.Errorf("invalid connection secret: %w", err)
+	}
+	switch r.Kind {
+	case "aws":
+		if err := validName(r.KeyID); err != nil {
 			return errors.New("an AWS connection needs the key ID secret and the secret key secret")
 		}
-		r.Upstream, r.Header = "", ""
-		r.Created = time.Now().UTC()
-		rec, err := json.Marshal(r)
-		if err != nil {
-			return err
+		if r.KeyID == r.Secret || r.Upstream != "" || r.Header != "" {
+			return errors.New("an AWS connection needs distinct key names and no upstream or header")
 		}
-		return s.db.Update(func(tx *bolt.Tx) error {
-			return tx.Bucket(bucketRoutes).Put([]byte(r.Name), rec)
-		})
-	}
-	if r.Kind != "" {
-		return errors.New(`route kind must be empty or "aws"`)
-	}
-	u, err := url.Parse(r.Upstream)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return errors.New("upstream must be a full URL like https://api.openai.com")
-	}
-	if r.Header == "" {
-		r.Header = "Authorization: Bearer {value}"
-	}
-	if !strings.Contains(r.Header, ":") || !strings.Contains(r.Header, "{value}") {
-		return errors.New(`header must look like "Name: prefix {value}"`)
+	case "direct":
+		if r.Upstream != "" || r.Header != "" || r.KeyID != "" {
+			return errors.New("a direct connection cannot have an upstream, header, or AWS key ID")
+		}
+		if _, builtin := builtinRoute(r.Secret); builtin {
+			return errors.New("a built-in API key must use its proxy connection")
+		}
+	case "":
+		if r.KeyID != "" {
+			return errors.New("an API connection cannot have an AWS key ID")
+		}
+		u, err := url.Parse(r.Upstream)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return errors.New("upstream must be a full HTTP URL like https://api.openai.com")
+		}
+		if r.Header == "" {
+			r.Header = "Authorization: Bearer {value}"
+		}
+		if !strings.Contains(r.Header, ":") || !strings.Contains(r.Header, "{value}") {
+			return errors.New(`header must look like "Name: prefix {value}"`)
+		}
+	default:
+		return errors.New(`route kind must be empty, "aws", or "direct"`)
 	}
 	r.Created = time.Now().UTC()
 	rec, err := json.Marshal(r)
@@ -551,7 +559,27 @@ func (s *Store) SetRoute(r Route) error {
 		return err
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketRoutes).Put([]byte(r.Name), rec)
+		bucket := tx.Bucket(bucketRoutes)
+		if err := bucket.ForEach(func(key, value []byte) error {
+			var old Route
+			if err := json.Unmarshal(value, &old); err != nil {
+				return err
+			}
+			if string(key) == r.Name {
+				// Replacing a route cannot silently downgrade a protected secret.
+				if r.Kind == "direct" && old.Kind != "direct" && (old.Secret == r.Secret || old.KeyID == r.Secret) {
+					return errors.New("delete the protected connection before approving direct access")
+				}
+				return nil
+			}
+			if old.Secret == r.Secret || old.KeyID == r.Secret || (r.Kind == "aws" && (old.Secret == r.KeyID || old.KeyID == r.KeyID)) {
+				return errors.New("secret already has a connection: " + old.Name)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		return bucket.Put([]byte(r.Name), rec)
 	})
 }
 

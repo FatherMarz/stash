@@ -92,6 +92,9 @@ func TestAWSProxySignsWithStoredKeyPair(t *testing.T) {
 	}
 	// AWS keys are never handed to stash run.
 	resp, body = e.req(t, agent, "POST", "/v1/run", map[string]any{})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("run without selection = %d %s", resp.StatusCode, body)
+	}
 	if strings.Contains(string(body), "real-secret") || strings.Contains(string(body), "AKIAREAL") {
 		t.Fatalf("run handed over an AWS key: %s", body)
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 const usageText = `stash — a small secrets store for agents and scripts
 
@@ -29,13 +30,13 @@ Server:
 Secrets (need STASH_TOKEN, and STASH_ADDR if not local):
   stash set NAME [VALUE]             VALUE from stdin when omitted
   stash get NAME                     print a value (asks for the owner password)
-  stash list                         each secret and how it reaches a program
+  stash list [--paths|--json]        names and connection status; no values
   stash ui                           browse, search, and edit secrets on one screen
   stash rename OLD NEW
   stash delete NAME
-  stash run [--secret NAME ...] [--] COMMAND [ARGS...]
-                                     run with secrets: API keys by proxy, the rest
-                                     as values printed as ****
+  stash run --secret NAME [--secret NAME ...] -- COMMAND [ARGS...]
+                                     run with named secrets on their approved paths
+                                     unconfigured secrets are blocked
 
 Owner password (need an owner STASH_TOKEN and a terminal):
   stash password set                 set or change the password that guards reads
@@ -50,7 +51,8 @@ Tokens (need an owner STASH_TOKEN):
 
 Proxy routes (need an owner STASH_TOKEN):
   stash route create NAME --upstream URL --secret SECRET [--header "H: p {value}"]
-  stash route list
+  stash route create NAME --secret SECRET --direct
+  stash route list [--json]
   stash route delete NAME
 
 AWS (the key pair stays in stash, stash signs each call):
@@ -250,6 +252,15 @@ func cmdGet(args []string) error {
 }
 
 func cmdList(args []string) error {
+	flags := flag.NewFlagSet("list", flag.ContinueOnError)
+	asJSON := flags.Bool("json", false, "print names and connection paths as JSON")
+	withPaths := flags.Bool("paths", false, "show each secret's connection status")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: stash list [--paths|--json]")
+	}
 	c := newClient()
 	var out struct {
 		Secrets []string          `json:"secrets"`
@@ -258,8 +269,11 @@ func cmdList(args []string) error {
 	if err := c.do("GET", "/v1/secrets", nil, &out); err != nil {
 		return err
 	}
-	// Scripts read one name per line. A person also sees each secret's path.
-	tty := term.IsTerminal(int(os.Stdout.Fd()))
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(out)
+	}
+	// Preserve scripts that read one name per line; agents can request paths.
+	tty := *withPaths || term.IsTerminal(int(os.Stdout.Fd()))
 	for _, n := range out.Secrets {
 		if tty && out.Paths[n] != "" {
 			fmt.Printf("%-44s %s\n", n, out.Paths[n])
@@ -417,24 +431,51 @@ func cmdRoute(args []string) error {
 			return errors.New(`usage: stash route create NAME --upstream URL --secret SECRET [--header "H: p {value}"]`)
 		}
 		name := rest[0]
-		fs := flag.NewFlagSet("route create", flag.ExitOnError)
+		fs := flag.NewFlagSet("route create", flag.ContinueOnError)
 		upstream := fs.String("upstream", "", "upstream base URL, like https://api.openai.com")
 		secret := fs.String("secret", "", "name of the secret to inject")
 		header := fs.String("header", "", `header template, default "Authorization: Bearer {value}"`)
-		fs.Parse(rest[1:])
-		if *upstream == "" || *secret == "" {
-			return errors.New("--upstream and --secret are required")
+		direct := fs.Bool("direct", false, "owner approval to give the program the real value")
+		if err := fs.Parse(rest[1:]); err != nil {
+			return err
 		}
-		return c.do("POST", "/v1/routes", Route{Name: name, Upstream: *upstream, Secret: *secret, Header: *header}, nil)
+		if fs.NArg() != 0 || *secret == "" {
+			return errors.New("--secret is required; use --upstream URL or --direct")
+		}
+		connection := Route{Name: name, Upstream: *upstream, Secret: *secret, Header: *header}
+		if *direct {
+			if *upstream != "" || *header != "" {
+				return errors.New("--direct cannot be combined with --upstream or --header")
+			}
+			connection.Kind = "direct"
+		} else if *upstream == "" {
+			return errors.New("--upstream is required for a proxy connection; use --direct only to approve giving the program the real value")
+		}
+		return c.do("POST", "/v1/routes", connection, nil)
 	case "list":
+		flags := flag.NewFlagSet("route list", flag.ContinueOnError)
+		asJSON := flags.Bool("json", false, "print connection metadata without secret values")
+		if err := flags.Parse(rest); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("usage: stash route list [--json]")
+		}
 		var out struct {
 			Routes []Route `json:"routes"`
 		}
 		if err := c.do("GET", "/v1/routes", nil, &out); err != nil {
 			return err
 		}
+		if *asJSON {
+			return json.NewEncoder(os.Stdout).Encode(out)
+		}
 		for _, r := range out.Routes {
-			fmt.Printf("%s\t%s\t%s\n", r.Name, r.Upstream, r.Secret)
+			kind := r.Kind
+			if kind == "" {
+				kind = "proxy"
+			}
+			fmt.Printf("%s\t%s\t%s\t%s\n", r.Name, kind, r.Upstream, r.Secret)
 		}
 		return nil
 	case "delete":

@@ -38,25 +38,33 @@ type runSetup struct {
 	SecretNames []string          `json:"secret_names"`
 }
 
-// secretKinds says how each secret reaches a program. "proxy": the program
-// gets a run token and stash adds the key on the way to its pinned site.
-// "aws": stash signs AWS calls, the key pair never leaves stash. "direct":
-// the program gets the real value, masked as **** in its output.
-// People see two paths: proxy (proxy and aws) and direct.
+// Unconfigured secrets stay blocked. Only the owner can approve direct access.
 func secretKinds(names []string, routes []Route) map[string]string {
 	paths := map[string]string{}
 	for _, name := range names {
-		paths[name] = "direct"
-		if _, ok := builtinRoute(name); ok {
-			paths[name] = "proxy"
+		paths[name] = "blocked"
+		var connections []Route
+		for _, rt := range routes {
+			if rt.Kind == "aws" && (rt.Secret == name || rt.KeyID == name) {
+				paths[name] = "aws"
+			} else if rt.Secret == name {
+				connections = append(connections, rt)
+			}
 		}
-	}
-	for _, rt := range routes {
-		if rt.Kind == "aws" {
-			paths[rt.KeyID] = "aws"
-			paths[rt.Secret] = "aws"
-		} else if paths[rt.Secret] != "aws" {
-			paths[rt.Secret] = "proxy"
+		if paths[name] == "aws" {
+			continue
+		}
+		_, builtin := builtinRoute(name)
+		if len(connections) == 0 && builtin {
+			paths[name] = "proxy"
+		} else if len(connections) == 1 {
+			rt := connections[0]
+			switch {
+			case rt.Kind == "" && rt.KeyID == "" && rt.Upstream != "":
+				paths[name] = "proxy"
+			case rt.Kind == "direct" && !builtin && rt.Upstream == "" && rt.Header == "" && rt.KeyID == "":
+				paths[name] = "direct"
+			}
 		}
 	}
 	return paths
@@ -68,7 +76,11 @@ func (s *server) runSession(w http.ResponseWriter, r *http.Request, tok *Token) 
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "expected a JSON object with optional secrets array")
+		writeErr(w, http.StatusBadRequest, "expected a JSON object with a non-empty secrets array")
+		return
+	}
+	if len(body.Secrets) == 0 {
+		writeErr(w, http.StatusBadRequest, "select at least one secret; use stash run --secret NAME -- COMMAND")
 		return
 	}
 	names, err := s.st.List()
@@ -87,13 +99,11 @@ func (s *server) runSession(w http.ResponseWriter, r *http.Request, tok *Token) 
 	}
 	paths := secretKinds(names, routes)
 	wanted := body.Secrets
-	if len(wanted) == 0 {
-		wanted = names
-	}
 	out := runSetup{SecretNames: names, Values: map[string]string{}}
 	allowed := map[string]Route{}
 	envNames := map[string]bool{}
 	seen := map[string]bool{}
+	var direct []string
 	for _, name := range wanted {
 		if seen[name] {
 			continue
@@ -104,17 +114,14 @@ func (s *server) runSession(w http.ResponseWriter, r *http.Request, tok *Token) 
 			return
 		}
 		key := envName(name)
-		if key == "STASH_TOKEN" || key == "STASH_ADDR" || strings.HasPrefix(key, "DSH_STASH_") || envNames[key] {
+		if key == "STASH_TOKEN" || key == "STASH_ADDR" || key == "STASH_MASTER_KEY" || strings.HasPrefix(key, "DSH_STASH_") || envNames[key] {
 			writeErr(w, 400, "conflicting environment name for secret: "+name)
 			return
 		}
 		switch paths[name] {
 		case "aws":
-			if len(body.Secrets) > 0 {
-				writeErr(w, 400, name+" is an AWS key. stash signs AWS calls for it: use the AWS profile that stash set up")
-				return
-			}
-			continue
+			writeErr(w, 400, name+" is an AWS key. stash signs AWS calls for it: use the AWS profile that stash set up")
+			return
 		case "proxy":
 			var match *Route
 			for i := range routes {
@@ -130,29 +137,39 @@ func (s *server) runSession(w http.ResponseWriter, r *http.Request, tok *Token) 
 				builtin, _ := builtinRoute(name)
 				match = &builtin
 			}
+			produced := []string{key, key + "_BASE_URL"}
+			if name == "OPENAI_API_KEY" {
+				produced = append(produced, "OPENAI_BASE_URL")
+			} else if name == "ANTHROPIC_API_KEY" {
+				produced = append(produced, "ANTHROPIC_BASE_URL")
+			}
+			for _, output := range produced {
+				if envNames[output] {
+					writeErr(w, 400, "conflicting environment name for secret: "+name)
+					return
+				}
+				envNames[output] = true
+			}
 			allowed[match.Name] = *match
 			out.Routes = append(out.Routes, runRoute{match.Name, name})
+		case "direct":
+			direct = append(direct, name)
 			envNames[key] = true
-			envNames[key+"_BASE_URL"] = true
 		default:
-			value, err := s.st.Get(name)
-			if err != nil {
-				writeErr(w, 500, err.Error())
-				return
-			}
-			out.Values[name] = value
-			envNames[key] = true
+			writeErr(w, 400, name+" is blocked; ask the owner to configure a proxy connection or explicitly approve direct access")
+			return
 		}
 	}
-	// A direct secret must not reuse a proxied secret's *_BASE_URL name.
-	for _, rt := range out.Routes {
-		for name := range out.Values {
-			if envName(name) == envName(rt.Secret)+"_BASE_URL" {
-				writeErr(w, 400, "conflicting environment name for secret: "+name)
-				return
-			}
+	// Validate the complete selection before reading any approved direct values.
+	for _, name := range direct {
+		value, err := s.st.Get(name)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
 		}
+		out.Values[name] = value
 	}
+
 	token, err := newRunToken()
 	if err != nil {
 		writeErr(w, 500, "cannot create run token")

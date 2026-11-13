@@ -16,11 +16,12 @@ import (
 	"golang.org/x/term"
 )
 
-// stash run starts the command with its secrets. An API key with a proxy
-// route arrives as a run token plus a matching *_BASE_URL, so the real key
-// never enters the command's process. AWS keys never arrive at all: the AWS
-// profile sends calls through stash. Every other secret arrives as its real
-// value, and stash prints it as **** in the command's output.
+// stash run starts the command with explicitly selected secrets. An API key
+// with a proxy route arrives as a run token plus a matching *_BASE_URL. The
+// real key never enters the command's process. AWS keys never arrive: the AWS
+// profile sends calls through stash. An owner-approved direct connection
+// supplies its real value. Captured output masks matching values of at least
+// eight bytes; this does not isolate the command from values it receives.
 
 type commandExit struct{ code int }
 
@@ -34,7 +35,7 @@ func cmdRun(args []string) error {
 			args = args[1:]
 			goto ready
 		case "--secret":
-			if len(args) < 2 || args[1] == "" {
+			if len(args) < 2 || strings.TrimSpace(args[1]) == "" || strings.HasPrefix(args[1], "-") {
 				return errors.New("--secret needs a secret name")
 			}
 			selected = append(selected, args[1])
@@ -48,12 +49,15 @@ func cmdRun(args []string) error {
 	}
 ready:
 	if len(args) == 0 {
-		return errors.New("usage: stash run [--secret NAME ...] [--] COMMAND [ARGS...]")
+		return errors.New("usage: stash run --secret NAME [--secret NAME ...] [--] COMMAND [ARGS...]")
+	}
+	if len(selected) == 0 {
+		return errors.New("select at least one secret with --secret NAME before the command")
 	}
 	return runProxied(args, selected)
 }
 
-// The server creates a scoped proxy credential without returning raw values.
+// The server scopes proxy credentials and returns only owner-approved direct values.
 func runProxied(args, selected []string) (err error) {
 	c := newClient()
 	var setup runSetup

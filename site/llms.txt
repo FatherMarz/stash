@@ -8,29 +8,46 @@ Agent skill: https://github.com/FatherMarz/stash/blob/main/skill/stash/SKILL.md
 
 Install: go install github.com/FatherMarz/stash@latest
 The human runs stash setup once in their own terminal, with the server stopped.
-Setup shows the owner token once, stores the agent token for the CLI, sorts every secret into a path,
+Setup shows the owner token once, stores the agent token for the CLI, reports proxy/direct/blocked secrets,
 and moves AWS profiles that used stash get to stash signing.
 Start the server with stash serve. It listens on http://127.0.0.1:8555.
 
 There are two tokens: owner and agent. The agent token works only through the stash program.
 Agents never read a value. Version 0.5 needs fresh tokens and has no open secrets.
 
-## Two paths
+## Access states
 
 proxy: the program never holds the key. API keys with a known site: the program gets a run token in NAME
 and the proxy URL in NAME_BASE_URL. AWS key pairs: the AWS profile sends calls through stash, which signs them.
-direct: everything else. The program gets the real value. stash prints it as **** in output.
-A program that holds a direct value can still leak it on purpose.
+direct: an owner-approved direct connection. The program gets the real value.
+Captured output masks matching values of at least eight bytes. Programs can still leak direct values on purpose.
+blocked: no connection exists. The run fails before the program starts.
+Unconfigured API keys do not fall back to direct access.
 
 ## Use
 
 stash list
-stash run -- COMMAND
 stash run --secret NAME -- COMMAND
 stash aws connect PROFILE --key-id SECRET --secret-key SECRET
 
 Built-in proxy connections: OPENAI_API_KEY, ANTHROPIC_API_KEY, OpenRouter API keys.
 The owner adds other APIs with stash route create.
+An explicit secret selection is required for each run. Omitted and empty selections fail.
+The owner can approve a database connection with:
+stash route create database --secret DATABASE_URL --direct
+
+## Agent-led setup
+
+Inspect the application for required secret names and actual API endpoints.
+Install stash, then give the human the setup and secret-entry commands to run in their own terminal.
+Use stash list --json to inspect names and paths. Do not read raw values.
+For blocked API keys, prepare the exact upstream and authentication-header command for the owner.
+For database passwords, explain direct access before asking the owner to approve that connection.
+Configure clients to use NAME_BASE_URL. Start programs with only their required --secret names.
+Check the connection with a harmless API request that prints no credentials.
+Do not reset owner access if the existing agent connection works.
+The agent-token workflow runs locally on macOS and Linux.
+stash does not isolate an agent with access to its storage files or OS account.
 
 Never ask users to paste secrets or owner tokens into chat.
 Users store keys with stash set NAME in their own terminal.

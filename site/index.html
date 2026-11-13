@@ -5,19 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0d1220">
 <title>Stash | Home</title>
-<meta name="description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. API keys and AWS keys stay in stash, audit log. MIT.">
+<meta name="description" content="A local secrets store for AI agents. Scoped API proxying, AWS signing and an audit log. Unconfigured secrets stay blocked. Free and MIT licensed.">
 <link rel="canonical" href="https://stash.modul4r.com/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="stash">
 <meta property="og:title" content="stash — a tiny secrets store for AI agents">
-<meta property="og:description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. API keys and AWS keys stay in stash, audit log. MIT.">
+<meta property="og:description" content="A local secrets store for AI agents. Scoped API proxying, AWS signing and an audit log. Unconfigured secrets stay blocked. Free and MIT licensed.">
 <meta property="og:url" content="https://stash.modul4r.com/">
 <meta property="og:image" content="https://stash.modul4r.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="stash — a tiny secrets store for AI agents">
-<meta name="twitter:description" content="A tiny open-source secrets store for AI agents. One 7 MB binary, one encrypted file. API keys and AWS keys stay in stash, audit log. MIT.">
+<meta name="twitter:description" content="A local secrets store for AI agents. Scoped API proxying, AWS signing and an audit log. Unconfigured secrets stay blocked. Free and MIT licensed.">
 <meta name="twitter:image" content="https://stash.modul4r.com/og.png">
 <script type="application/ld+json">
 {
@@ -27,14 +27,14 @@
       "@type": "SoftwareApplication",
       "@id": "https://stash.modul4r.com/#app",
       "name": "stash",
-      "description": "A tiny open-source secrets store for AI agents. One 7 MB binary encrypts secrets with AES-256-GCM into a single file and serves them over a token-protected HTTP API, with an audit log and a proxy that keeps API keys and AWS keys out of the agent's programs.",
+      "description": "A local secrets store with encrypted storage, explicit secret selection, owner-approved connections, API proxying, AWS signing and an audit log.",
       "url": "https://stash.modul4r.com/",
       "applicationCategory": "DeveloperApplication",
-      "operatingSystem": "macOS, Linux, Windows",
+      "operatingSystem": "macOS, Linux",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
       "license": "https://github.com/FatherMarz/stash/blob/main/LICENSE",
       "downloadUrl": "https://github.com/FatherMarz/stash",
-      "softwareVersion": "0.4.0",
+      "softwareVersion": "0.6.0",
       "author": { "@id": "https://stash.modul4r.com/#author" }
     },
     {
@@ -66,7 +66,7 @@
   *{box-sizing:border-box}
   body{
     margin:0; color:var(--text);
-    background:radial-gradient(900px 420px at 50% -120px, rgba(61,214,195,.10), transparent 70%) no-repeat, var(--bg);
+    background:var(--bg);
     min-height:100vh;
     font:15px/1.65 "JetBrains Mono",ui-monospace,monospace;
     letter-spacing:.02em;
@@ -112,6 +112,7 @@
   .btn:hover{background:var(--accent); color:var(--accent-fg); border-bottom-color:var(--accent)}
   .btn.solid{background:var(--accent); color:var(--accent-fg)}
   .btn.solid:hover{background:transparent; color:var(--accent)}
+  button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
   footer{
     margin-top:64px; padding-top:18px; border-top:1px solid var(--border);
     display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
@@ -124,13 +125,13 @@
 <body>
 <main>
   <h1>stash<span class="dot">_</span></h1>
-  <p class="tag">A tiny secrets store for AI agents. One 7 MB binary, one encrypted file.</p>
+  <p class="tag">A tiny secrets store for AI agents. One Go binary, encrypted local storage.</p>
 
   <div class="btns">
     <a class="btn solid" href="https://github.com/FatherMarz/stash">GitHub →</a>
     <button class="btn" id="llmcopy" type="button">Copy for LLM</button>
   </div>
-  <p class="small">Copy for LLM puts setup instructions on your clipboard. Paste them to your agent and it installs stash for you.</p>
+  <p class="small">Paste the setup instructions to your agent. It installs stash and prepares the connection commands for you to run.</p>
 
   <h2>Quick start</h2>
   <div class="codewrap"><pre><code>go install github.com/FatherMarz/stash@latest
@@ -138,23 +139,29 @@
 stash setup                        <span class="c"># once, in your terminal: owner token, paths, AWS</span>
 stash serve
 stash set OPENAI_API_KEY           <span class="c"># paste the value in your terminal</span>
-stash list                         <span class="c"># each secret and its path</span>
-stash run -- python agent.py       <span class="c"># the agent gets its secrets, never your API keys</span></code></pre></div>
+stash list                         <span class="c"># proxy, direct, or blocked</span>
+stash run --secret OPENAI_API_KEY -- python agent.py</code></pre></div>
 
-  <h2>Two paths for agents</h2>
-  <p class="small"><b>Proxy.</b> API keys and AWS keys never reach the program. The program gets a run token. stash adds the real key on the way out, and only to that key's own site. For AWS, the profile sends each call through stash, and stash signs it.</p>
-  <p class="small"><b>Direct.</b> Database URLs, signing secrets and <span class="a">.env</span> files reach the program as real values, because the program needs them. stash prints them as <span class="a">****</span> in output. A program that wants to leak one still can, so keep every API key on the proxy.</p>
+  <h2>Access with clear limits</h2>
+  <p class="small"><b>Proxy.</b> Supported API connections give the program a substitute token. stash adds the real key before forwarding to the configured service. Connected AWS profiles use stash to sign supported requests.</p>
+  <p class="small"><b>Direct.</b> A program can need a real database password or signing secret. You must approve a direct connection first. Captured output masks matching values of at least eight bytes. This does not prevent deliberate disclosure.</p>
+  <p class="small"><b>Blocked.</b> Unconfigured secrets stay blocked. Each run must name its required secrets with <span class="a">--secret</span>. A blocked selection stops the entire run before the program starts.</p>
 
   <h2>One setup, two tokens</h2>
-  <p class="small"><span class="a">stash setup</span> gives you the owner token once and sorts every secret into its path. Agents need nothing: the agent token works only through the stash program, so a copy in <span class="a">curl</span> does nothing. Each <span class="a">stash run</span> gets its own run token, which ends when the program exits.</p>
+  <p class="small">Your agent prepares setup and connection commands. You run the owner commands and enter secret values in your own terminal. <span class="a">stash setup</span> shows the owner token once and stores an agent token for the CLI. Agents do not need your owner token.</p>
+  <p class="small">The local agent workflow supports macOS and Linux. Each scoped run gets its own token, which ends when the program exits.</p>
   <div class="codewrap"><pre><code>stash aws connect my-profile --key-id MY_KEY_ID --secret-key MY_SECRET_KEY
 stash route create service --upstream https://api.example.com --secret SERVICE_KEY
+stash route create database --secret DATABASE_URL --direct
 stash audit                        <span class="c"># who used what, when</span></code></pre></div>
+  <p class="small">Use proxy connections for API keys. Approve direct access only when a program must hold the real value.</p>
 
   <h2>Notes</h2>
   <ul>
-    <li>Secrets are AES-256-GCM encrypted in <span class="a">~/.stash/stash.db</span>. The key is <span class="a">~/.stash/stash.key</span>. Back up both. Keep them apart.</li>
-    <li>stash listens on <span class="a">127.0.0.1</span> only. If you expose it, add <span class="a">--tls-cert</span> and <span class="a">--tls-key</span>.</li>
+    <li>Secrets use AES-256-GCM in <span class="a">~/.stash/stash.db</span>. The default encryption key sits beside it in <span class="a">~/.stash/stash.key</span>. Back up both. stash does not isolate an agent that can read those files or control your OS account.</li>
+    <li>stash listens on <span class="a">127.0.0.1</span> by default. Remote server access requires a custom address and TLS. Agent-token access remains local.</li>
+    <li>AWS presigned URLs, signed-chunk uploads, API Gateway and signed bodies over 256 MB are unsupported.</li>
+    <li>Existing unscoped scripts need explicit secret selections. Unconfigured values now require owner-approved connections.</li>
     <li><span class="a">stash help</span> lists every command. Each command maps to an HTTP route under <span class="a">/v1/</span>.</li>
     <li>An agent skill ships in the repo. It teaches Claude Code (or any agent) how to use stash.</li>
     <li>No web UI, no rotation, no clustering. If you need those, use Infisical or OpenBao.</li>
@@ -166,18 +173,30 @@ stash audit                        <span class="c"># who used what, when</span><
   </footer>
 </main>
 <script>
-  const LLM_TEXT = `Set up stash 0.5, a local secrets store for agents: https://github.com/FatherMarz/stash
+  const LLM_TEXT = `Set up stash 0.6, a local secrets store for agents: https://github.com/FatherMarz/stash
 
 1. Install: go install github.com/FatherMarz/stash@latest
 2. The human stops any running server and runs stash setup in their own terminal.
-   Setup shows the owner token once, stores the agent token for the CLI, and sorts every secret into a path.
+   Setup shows the owner token once, stores the agent token for the CLI, and reports access states.
    Never ask for the owner token or print it in chat.
 3. Start stash serve. It listens on http://127.0.0.1:8555.
 4. The human stores keys with stash set NAME in their terminal.
-5. Agents run stash run -- COMMAND. API keys arrive as a run token in NAME plus NAME_BASE_URL.
-   Point the client at NAME_BASE_URL. AWS profiles set up with stash aws connect send calls through stash.
-   Other secrets arrive as values, printed as **** in output.
-6. Load the agent skill: https://github.com/FatherMarz/stash/blob/main/skill/stash/SKILL.md`;
+5. Inspect the application for its required secret names, API upstreams, and authentication headers.
+   Run stash list --json to inspect names and paths without reading raw values.
+6. Unconfigured secrets stay blocked. Prepare exact owner proxy commands for API keys, such as:
+   stash route create service --upstream https://api.example.com --secret SERVICE_API_KEY
+   If the API uses a custom header, add --header 'x-api-key: {value}' with its real header name.
+   For a database password that the program must hold, explain direct access and prepare:
+   stash route create database --secret DATABASE_URL --direct
+   The human runs owner commands in their terminal. Never request the owner token or secret values in chat.
+   Do not convert a blocked API key to direct access to bypass a missing proxy.
+7. Use stash run --secret NAME -- COMMAND, repeating --secret for each required name.
+   Empty and omitted selections fail. Point API clients at NAME_BASE_URL.
+   Connected AWS profiles send supported calls through stash for signing.
+   Approved direct values reach programs unchanged. Output masking is not an agent sandbox.
+8. Check a harmless service request without printing credentials.
+   Do not reset setup if the existing agent connection works.
+9. Load the agent skill: https://github.com/FatherMarz/stash/blob/main/skill/stash/SKILL.md`;
 
   function flash(btn, label){
     const old = btn.textContent;

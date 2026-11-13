@@ -146,10 +146,14 @@ func printPaths(st *Store, moved []string) error {
 	}
 	fmt.Printf("\n%d secrets sorted:\n", len(names))
 	fmt.Printf("  proxy   %3d  the program never holds the key (API keys and AWS keys)\n", len(count["proxy"]))
-	fmt.Printf("  direct  %3d  the program gets the value, printed as ****\n", len(count["direct"]))
+	fmt.Printf("  direct  %3d  owner-approved real values; captured output is masked\n", len(count["direct"]))
+	fmt.Printf("  blocked %3d  the owner must configure a connection before use\n", len(count["blocked"]))
 	for _, profile := range moved {
 		fmt.Printf("AWS profile %s now goes through stash.\n", profile)
 	}
 	fmt.Println("Run stash list to see each secret's path.")
+	fmt.Println("For blocked API keys, ask the owner to run stash route create NAME --upstream URL --secret SECRET.")
+	fmt.Println("For a database password or another value the program must hold, the owner can run stash route create NAME --secret SECRET --direct.")
+	fmt.Println("Agents must select each run's secrets: stash run --secret NAME -- COMMAND.")
 	return nil
 }

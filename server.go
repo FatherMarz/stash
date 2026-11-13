@@ -32,7 +32,8 @@ func newMux(st *Store) *http.ServeMux {
 	s := &server{st: st, runs: runSessions{leases: make(map[string]runLease)}, peerOK: peerCheck}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": version,
+			"capabilities": []string{"explicit_run_scope", "blocked_unconfigured", "owner_direct_connections"}})
 	})
 	mux.HandleFunc("GET /v1/secrets", s.auth("agent", s.listSecrets))
 	mux.HandleFunc("GET /v1/secrets/{name}", s.auth("owner", s.getSecret))
@@ -465,6 +466,10 @@ func (s *server) proxyRequest(w http.ResponseWriter, r *http.Request, tok *Token
 	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rt.Kind != "" {
+		writeErr(w, http.StatusBadRequest, "this connection is not an HTTP proxy")
 		return
 	}
 	value, err := s.st.Get(rt.Secret)

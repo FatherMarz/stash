@@ -2,6 +2,8 @@
 
 A small secrets store for agents. One Go binary, encrypted local storage, and an audit log.
 
+The agent prepares setup and connection commands. The owner runs commands that handle secrets or authorize connections in their own terminal.
+
 ## Setup
 
 ```sh
@@ -14,24 +16,28 @@ Run setup once, in your own terminal, while the server is stopped. Setup does fo
 
 1. It shows the owner token once. Save it in your password manager. Never put it in a shell file.
 2. It stores an agent token in `~/.stash/agent.token`. The CLI uses it by itself. Agents need nothing.
-3. It sorts every secret into one of two paths (see below) and prints the count for each.
+3. It reports the proxy, direct, and blocked secrets.
 4. It moves every AWS profile that read its keys with `stash get` to stash signing.
 
-There is nothing else to choose.
+The agent lists secret names and prepares the required connections. Unconfigured secrets stay blocked.
 
-## Two paths
+## Secret access
 
-Each secret reaches a program in one way. stash picks the path from the secret. `stash list` shows it.
+`stash list` shows how a program can use each secret. No run receives secrets until it names them explicitly.
 
 | Path | Secrets | What the program gets |
 | --- | --- | --- |
 | proxy | API keys with a known site, and AWS key pairs | Never the key. For an API key: a run token and a `NAME_BASE_URL`, and stash adds the real key on the way out, only to that site. For AWS: the profile sends each call through stash, and stash signs it. |
-| direct | Everything else: database URLs, signing secrets, `.env` files, publish tokens | The real value. stash prints it as `****` in the program's output. |
+| direct | Secrets with an explicit owner-approved direct connection | The real value. Captured output masks matching values of at least eight bytes. |
+| blocked | Secrets without a built-in proxy or owner-approved connection | Nothing. The run fails before it starts the program or creates a run token. |
 
 A proxy works only for calls to a website or AWS. A program that logs in to a database or signs data itself must hold the real value.
 
-The direct path does not stop a program that wants to leak a value. The program holds the value,
-so it can write it to a file or encode it before it prints it. Use the proxy path for every API key you can.
+API keys need proxy connections. An unknown API key does not fall back to a direct value.
+Database passwords and signing secrets can need direct access. The owner must approve that access explicitly.
+
+The direct path does not stop deliberate disclosure. Programs can write values to files or encode them before output.
+stash does not isolate an agent with access to your storage files or operating-system account.
 
 ### Proxy
 
@@ -59,6 +65,18 @@ stash route create virustotal --upstream https://www.virustotal.com --secret VIR
 
 The program sends its stand-in key in the same header. stash swaps it for the real key.
 
+### Owner-approved direct access
+
+For a database password or another value that a program must hold, the owner creates a direct connection:
+
+```sh
+stash route create database --secret DATABASE_URL --direct
+```
+
+The agent can prepare this command. Only the owner can authorize the connection.
+Do not use a direct connection for an API key. Configure the API's upstream and authentication header instead.
+Direct connections cannot include an upstream, header, or AWS key pair.
+
 ### AWS
 
 ```sh
@@ -74,11 +92,13 @@ Presigned URLs and signed-chunk uploads cannot go through stash.
 ## Run a program
 
 ```sh
-stash run -- python agent.py
 stash run --secret OPENAI_API_KEY -- python agent.py
+stash run --secret OPENAI_API_KEY --secret DATABASE_URL -- python agent.py
 ```
 
-Without `--secret`, the program gets every secret on its path. `--secret` limits the list.
+Repeat `--secret` for each required secret. An omitted or empty selection fails.
+The CLI and server enforce this rule. There is no implicit access to the full store.
+The database example requires the owner-approved direct connection shown above.
 
 Each `stash run` gets its own run token. The token works only for that program's proxy connections.
 It ends when the program exits. If `stash run` dies, the token stops working within one hour.
@@ -88,7 +108,32 @@ A server restart ends every run token. Restart long-running programs after a ser
 
 - **Owner:** manages secrets, connections, and tokens. Reads values with the owner password.
 - **Agent:** works only through the stash program. It can list names, add new secrets, and start `stash run`.
-  It cannot read a value, change an existing secret, or call the proxy with `curl`.
+  It cannot read a value, change an existing secret, authorize connections, or call the proxy with `curl`.
+
+The agent-token workflow uses local process checks on macOS and Linux. It does not support remote agent-token clients.
+
+## Agent-led setup
+
+1. Inspect the application to identify its required secret names and API endpoints.
+2. Install stash with the documented Go command.
+3. Ask the owner to run `stash setup` in their terminal with the server stopped.
+4. Ask the owner to save the owner token in their password manager.
+5. Start `stash serve` through the existing service or terminal workflow.
+6. Ask the owner to store new values with `stash set NAME` in their terminal.
+7. Run `stash list --json` to inspect names and paths without reading values.
+8. Prepare exact owner commands for missing proxy or direct connections.
+9. Configure the application to use its provided `NAME_BASE_URL`.
+10. Start it with the smallest explicit `--secret` selection.
+11. Use a harmless API request to check the connection without printing credentials.
+
+Do not ask for secrets, owner tokens, or owner passwords in chat.
+If setup is already complete, use the existing agent token. Do not reset owner access to repeat setup.
+
+## Existing scripts
+
+Version 0.6 requires changes to scripts that used an unscoped `stash run`.
+List only the secrets each script needs. Configure connections for blocked names before restarting those scripts.
+See [the migration guide](docs/safer-defaults.md).
 
 ## Owner commands
 

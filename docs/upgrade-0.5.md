@@ -1,4 +1,7 @@
-# Upgrade stash to 0.5, step by step
+# Upgrade Stash Versions Before 0.5
+
+The current binary is 0.6. If you already use 0.5, use the [0.6 migration guide](safer-defaults.md) instead.
+The older-version steps below preserve secrets and replace legacy tokens, then apply the 0.6 access rules.
 
 Time: about 10 minutes. Do every step in your own terminal, on the computer that runs stash.
 Most steps are the same on a Mac and on Linux or WSL. Where they differ, both are shown.
@@ -9,7 +12,8 @@ What changes:
 - Old tokens stop working. Your saved secrets stay.
 - API keys for OpenAI, Anthropic and OpenRouter stay in stash. A program gets a stand-in key and a `NAME_BASE_URL`.
 - AWS profiles that read keys with `stash get` move over by themselves. stash signs those AWS calls.
-- All other secrets reach a program the same way as before, printed as `****` in its output.
+- Unconfigured secrets stay blocked. Direct access requires an explicit owner-approved connection.
+- Each `stash run` must name its required secrets with `--secret`.
 
 ## 1. See what you have now
 
@@ -51,7 +55,7 @@ cp "$(which stash)" ~/stash-0.4-binary
 
 ## 3. Get the new version
 
-stash 0.5 needs Go 1.21 or newer. Check with `go version`.
+The source requires Go 1.25 or newer. Check with `go version`.
 
 If Go is missing or older on a Mac, run `brew install go`.
 
@@ -73,7 +77,7 @@ GOBIN=/tmp/stash-new go install github.com/FatherMarz/stash@latest
 /tmp/stash-new/stash version
 ```
 
-The last line must say `0.5.0`.
+The last line must say `0.6.0`.
 
 ## 4. Stop the stash server
 
@@ -102,7 +106,7 @@ hash -r
 stash version
 ```
 
-The last line must say `0.5.0`.
+The last line must say `0.6.0`.
 
 ## 6. Run setup
 
@@ -130,7 +134,7 @@ Check that it runs:
 curl -s http://127.0.0.1:8555/v1/health
 ```
 
-The answer must be `{"ok":true}`.
+The response must include `"ok":true`, `"version":"0.6.0"`, and the safer-defaults capabilities.
 
 ## 8. Remove old token lines
 
@@ -146,10 +150,12 @@ Open each file it names and delete each `export STASH_TOKEN=...` line. Then open
 
 ```sh
 stash list
-stash run -- sh -c 'echo "stash run works"'
+stash run --secret OPENAI_API_KEY -- sh -c 'echo "stash run works"'
 ```
 
-`stash list` shows each secret and its path: `proxy` or `direct`.
+The example requires a stored `OPENAI_API_KEY`. Use a configured secret name from your store instead if needed.
+`stash list` shows each secret as `proxy`, `direct`, or `blocked`.
+Before restarting existing programs, use the [safer-defaults migration guide](safer-defaults.md) to prepare their connections and explicit selections.
 
 If setup moved an AWS profile, test it. Use the profile name from setup in place of `PROFILE`:
 
