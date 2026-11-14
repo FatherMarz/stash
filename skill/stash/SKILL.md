@@ -40,14 +40,16 @@ Change it to read `NAME_BASE_URL`.
 
 `stash set NAME` adds a new secret (value from stdin). Changing an existing secret needs the owner.
 Never ask the user to paste a value into chat. Tell them to run `stash set NAME` in their own terminal.
+The terminal prompt hides input and finishes on Enter. Piped input still supports multiline values.
 
 ## Lead setup for the user
 
 1. Read the application's integration code to find required secret names and endpoints.
 2. Install stash with `go install github.com/FatherMarz/stash@latest` if it is absent.
+   Require Go 1.25 or newer and a PATH that includes Go's bin directory.
 3. If setup is incomplete, tell the user to stop the server and run `stash setup` in their own terminal.
 4. Tell the user to save the owner token in their password manager.
-5. Start the server through its existing service or terminal workflow.
+5. Start the server through its existing service or a separate terminal. A foreground server keeps that terminal occupied.
 6. Give the user `stash set NAME` commands for missing values.
 7. Run `stash list --json` to inspect names and paths.
 8. Prepare owner connection commands for the blocked names that this application needs.
@@ -67,6 +69,9 @@ stash route create service --upstream https://api.example.com --secret SERVICE_A
 
 These are alternative authentication examples. Choose the command that matches the service.
 Do not run owner commands with agent credentials or ask for the owner token.
+Tell the owner to run `read -r -s STASH_TOKEN` in their own Bash or Zsh terminal.
+They paste the token and press Enter, then run `export STASH_TOKEN`. The token stays out of chat and shell history.
+After the connection commands, they run `unset STASH_TOKEN`.
 
 For a database URL or signing secret that the program must hold, explain the direct-access consequence.
 Then give the owner a command such as:

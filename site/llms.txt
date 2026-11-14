@@ -7,10 +7,11 @@ Agent skill: https://github.com/FatherMarz/stash/blob/main/skill/stash/SKILL.md
 ## Setup
 
 Install: go install github.com/FatherMarz/stash@latest
+Require Go1.25 or newer on macOS/Linux and include Go's bin directory on PATH.
 The human runs stash setup once in their own terminal, with the server stopped.
 Setup shows the owner token once, stores the agent token for the CLI, reports proxy/direct/blocked secrets,
 and moves AWS profiles that used stash get to stash signing.
-Start the server with stash serve. It listens on http://127.0.0.1:8555.
+Start the server with stash serve in a separate terminal or existing service. It listens on http://127.0.0.1:8555.
 
 There are two tokens: owner and agent. The agent token works only through the stash program.
 Agents never read a value. Version 0.5 needs fresh tokens and has no open secrets.
@@ -51,3 +52,7 @@ stash does not isolate an agent with access to its storage files or OS account.
 
 Never ask users to paste secrets or owner tokens into chat.
 Users store keys with stash set NAME in their own terminal.
+The terminal prompt hides the value and completes on Enter. Pipes remain available for multiline data.
+For owner commands, have the user run read -r -s STASH_TOKEN in their own Bash or Zsh terminal.
+They paste the token and press Enter, then run export STASH_TOKEN. Never request or capture the token in chat.
+They run unset STASH_TOKEN after the owner commands.

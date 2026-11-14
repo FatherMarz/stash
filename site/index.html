@@ -12,13 +12,13 @@
 <meta property="og:title" content="stash — a tiny secrets store for AI agents">
 <meta property="og:description" content="A local secrets store for AI agents. Scoped API proxying, AWS signing and an audit log. Unconfigured secrets stay blocked. Free and MIT licensed.">
 <meta property="og:url" content="https://stash.modul4r.com/">
-<meta property="og:image" content="https://stash.modul4r.com/og.png">
+<meta property="og:image" content="https://stash.modul4r.com/og.png?v=0.6.1">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="stash — a tiny secrets store for AI agents">
 <meta name="twitter:description" content="A local secrets store for AI agents. Scoped API proxying, AWS signing and an audit log. Unconfigured secrets stay blocked. Free and MIT licensed.">
-<meta name="twitter:image" content="https://stash.modul4r.com/og.png">
+<meta name="twitter:image" content="https://stash.modul4r.com/og.png?v=0.6.1">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -34,7 +34,7 @@
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
       "license": "https://github.com/FatherMarz/stash/blob/main/LICENSE",
       "downloadUrl": "https://github.com/FatherMarz/stash",
-      "softwareVersion": "0.6.0",
+      "softwareVersion": "0.6.1",
       "author": { "@id": "https://stash.modul4r.com/#author" }
     },
     {
@@ -124,6 +124,7 @@
 </head>
 <body>
 <main>
+  <div id="launch-intro">
   <h1>stash<span class="dot">_</span></h1>
   <p class="tag">A tiny secrets store for AI agents. One Go binary, encrypted local storage.</p>
 
@@ -132,15 +133,19 @@
     <button class="btn" id="llmcopy" type="button">Copy for LLM</button>
   </div>
   <p class="small">Paste the setup instructions to your agent. It installs stash and prepares the connection commands for you to run.</p>
+  </div>
 
   <h2>Quick start</h2>
-  <div class="codewrap"><pre><code>go install github.com/FatherMarz/stash@latest
-
-stash setup                        <span class="c"># once, in your terminal: owner token, paths, AWS</span>
-stash serve
-stash set OPENAI_API_KEY           <span class="c"># paste the value in your terminal</span>
-stash list                         <span class="c"># proxy, direct, or blocked</span>
-stash run --secret OPENAI_API_KEY -- python agent.py</code></pre></div>
+  <p class="small">Use Go 1.25 or newer on macOS or Linux. Add Go's bin directory to your PATH after installation.</p>
+  <div class="codewrap"><pre><code>go install github.com/FatherMarz/stash@latest</code></pre></div>
+  <p class="small">For a new store, run setup in your own terminal and save the owner token in your password manager. Existing users follow the <a href="https://github.com/FatherMarz/stash/blob/main/docs/safer-defaults.md">upgrade guide</a>.</p>
+  <div class="codewrap"><pre><code>stash setup</code></pre></div>
+  <p class="small">In a second terminal, start the server and leave it running.</p>
+  <div class="codewrap"><pre><code>stash serve</code></pre></div>
+  <p class="small">Return to the first terminal. Run this command, enter the key at the hidden prompt, and press Enter.</p>
+  <div class="codewrap"><pre><code>stash set OPENAI_API_KEY</code></pre></div>
+  <p class="small">Your agent configures the application and starts it with only its required secrets.</p>
+  <div class="codewrap"><pre><code>stash run --secret OPENAI_API_KEY -- python agent.py</code></pre></div>
 
   <h2>Access with clear limits</h2>
   <p class="small"><b>Proxy.</b> Supported API connections give the program a substitute token. stash adds the real key before forwarding to the configured service. Connected AWS profiles use stash to sign supported requests.</p>
@@ -150,10 +155,15 @@ stash run --secret OPENAI_API_KEY -- python agent.py</code></pre></div>
   <h2>One setup, two tokens</h2>
   <p class="small">Your agent prepares setup and connection commands. You run the owner commands and enter secret values in your own terminal. <span class="a">stash setup</span> shows the owner token once and stores an agent token for the CLI. Agents do not need your owner token.</p>
   <p class="small">The local agent workflow supports macOS and Linux. Each scoped run gets its own token, which ends when the program exits.</p>
+  <p class="small">Before owner commands, run this in your own Bash or Zsh terminal. Paste the owner token at the hidden input and press Enter.</p>
+  <div class="codewrap"><pre><code>read -r -s STASH_TOKEN</code></pre></div>
+  <p class="small">Then activate it for this terminal only:</p>
+  <div class="codewrap"><pre><code>export STASH_TOKEN</code></pre></div>
   <div class="codewrap"><pre><code>stash aws connect my-profile --key-id MY_KEY_ID --secret-key MY_SECRET_KEY
 stash route create service --upstream https://api.example.com --secret SERVICE_KEY
 stash route create database --secret DATABASE_URL --direct
-stash audit                        <span class="c"># who used what, when</span></code></pre></div>
+stash audit                        <span class="c"># who used what, when</span>
+unset STASH_TOKEN                  <span class="c"># return to agent access</span></code></pre></div>
   <p class="small">Use proxy connections for API keys. Approve direct access only when a program must hold the real value.</p>
 
   <h2>Notes</h2>
@@ -173,14 +183,17 @@ stash audit                        <span class="c"># who used what, when</span><
   </footer>
 </main>
 <script>
-  const LLM_TEXT = `Set up stash 0.6, a local secrets store for agents: https://github.com/FatherMarz/stash
+  const LLM_TEXT = `Set up stash 0.6.1, a local secrets store for agents: https://github.com/FatherMarz/stash
 
-1. Install: go install github.com/FatherMarz/stash@latest
-2. The human stops any running server and runs stash setup in their own terminal.
+1. Require Go1.25 or newer on macOS/Linux. Install: go install github.com/FatherMarz/stash@latest
+   Ensure Go's bin directory is on PATH.
+2. For an uninitialized store only, the human runs stash setup in their own terminal with the server stopped.
    Setup shows the owner token once, stores the agent token for the CLI, and reports access states.
    Never ask for the owner token or print it in chat.
-3. Start stash serve. It listens on http://127.0.0.1:8555.
-4. The human stores keys with stash set NAME in their terminal.
+   For an existing store, follow the upgrade guide instead: https://github.com/FatherMarz/stash/blob/main/docs/safer-defaults.md
+3. Start stash serve in a separate terminal or the existing service. Leave a foreground server running in its terminal.
+   It listens on http://127.0.0.1:8555.
+4. The human stores keys with stash set NAME in their terminal. Input is hidden and completes on Enter.
 5. Inspect the application for its required secret names, API upstreams, and authentication headers.
    Run stash list --json to inspect names and paths without reading raw values.
 6. Unconfigured secrets stay blocked. Prepare exact owner proxy commands for API keys, such as:
@@ -189,6 +202,9 @@ stash audit                        <span class="c"># who used what, when</span><
    For a database password that the program must hold, explain direct access and prepare:
    stash route create database --secret DATABASE_URL --direct
    The human runs owner commands in their terminal. Never request the owner token or secret values in chat.
+   First have them run read -r -s STASH_TOKEN in their own Bash or Zsh terminal.
+   They paste the owner token and press Enter, then run export STASH_TOKEN.
+   After the owner commands, they run unset STASH_TOKEN. Do not combine the interactive read with pasted follow-up commands.
    Do not convert a blocked API key to direct access to bypass a missing proxy.
 7. Use stash run --secret NAME -- COMMAND, repeating --secret for each required name.
    Empty and omitted selections fail. Point API clients at NAME_BASE_URL.

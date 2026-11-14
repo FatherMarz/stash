@@ -17,7 +17,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "0.6.0"
+const version = "0.6.1"
 
 const usageText = `stash — a small secrets store for agents and scripts
 
@@ -28,7 +28,7 @@ Server:
   stash reset-password [--data DIR]  remove the owner password (offline recovery)
 
 Secrets (need STASH_TOKEN, and STASH_ADDR if not local):
-  stash set NAME [VALUE]             VALUE from stdin when omitted
+  stash set NAME [VALUE]             hidden terminal prompt, or stdin when piped
   stash get NAME                     print a value (asks for the owner password)
   stash list [--paths|--json]        names and connection status; no values
   stash ui                           browse, search, and edit secrets on one screen
@@ -205,6 +205,12 @@ func cmdSet(args []string) error {
 	var value string
 	if len(args) == 2 {
 		value = args[1]
+	} else if term.IsTerminal(int(os.Stdin.Fd())) {
+		var err error
+		value, err = readPassword("secret value: ")
+		if err != nil {
+			return err
+		}
 	} else {
 		b, err := io.ReadAll(os.Stdin)
 		if err != nil {

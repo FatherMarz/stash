@@ -6,11 +6,25 @@ The agent prepares setup and connection commands. The owner runs commands that h
 
 ## Setup
 
+Use Go 1.25 or newer on macOS or Linux. After installation, put Go's bin directory on your PATH.
+
 ```sh
 go install github.com/FatherMarz/stash@latest
+```
+
+For a new store, run setup in your own terminal:
+
+```sh
 stash setup
+```
+
+Save the owner token in your password manager. In a second terminal, start the server and leave it running:
+
+```sh
 stash serve
 ```
+
+Return to the first terminal to add secrets and run programs. Existing stores use the migration guide instead of repeating setup.
 
 Run setup once, in your own terminal, while the server is stopped. Setup does four things:
 
@@ -50,6 +64,20 @@ Built-in connections:
 | Names with `OPENROUTER` that end in `API_KEY` | `https://openrouter.ai/api/v1` |
 
 For another API, the owner adds a connection once:
+
+First activate the owner token in your own Bash or Zsh terminal. Run this command, paste the token, then press Enter:
+
+```sh
+read -r -s STASH_TOKEN
+```
+
+The input stays hidden. Then run:
+
+```sh
+export STASH_TOKEN
+```
+
+Do not send that token to the agent. After the owner commands, run `unset STASH_TOKEN` to return to agent access.
 
 ```sh
 stash route create service --upstream https://api.example.com --secret SERVICE_KEY
@@ -137,7 +165,9 @@ See [the migration guide](docs/safer-defaults.md).
 
 ## Owner commands
 
-Set `STASH_TOKEN` to the owner token in that one terminal only.
+Use the hidden owner-token entry above in that one terminal only.
+With `stash set NAME`, enter the secret at the hidden prompt and press Enter.
+For multiline data, pipe a file to the command. Inline values still work but can enter shell history.
 
 ```sh
 stash ui
@@ -153,7 +183,7 @@ stash audit --limit 50
 If you lose your owner token, stop the server and run `stash reset-owner` in your terminal.
 If you lose your password, stop the server and run `stash reset-password`.
 
-## Upgrade to 0.5
+## Upgrade from versions before 0.5
 
 0.5 needs fresh tokens. Older tokens stop working. Secrets, the password, and connections stay.
 0.5 has no open secrets. AWS profiles that read keys with `stash get` move to stash signing.

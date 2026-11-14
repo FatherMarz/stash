@@ -6,7 +6,7 @@ Back up the store, encryption key, installed binary, and service definitions bef
 Keep the current service running during planning. Stop it before copying the database or replacing the binary.
 Restart the updated service before running new owner connection commands.
 The public health response reports its version and access-policy capabilities.
-Confirm that the running server and CLI both use 0.6.0 before applying a batch.
+Confirm that the running server and CLI both use 0.6.1 before applying the current batch.
 Use `stash route list --json` to export complete connection metadata without values.
 
 ## Agent work
@@ -27,6 +27,17 @@ The agent must not change a blocked API key to direct access to make a request p
 
 The following examples use secret names and example endpoints. Replace them with the service's real details.
 Use the owner token only in your own terminal. Do not send that token to the agent.
+In your own Bash or Zsh terminal, run this command, paste the token, and press Enter:
+
+```sh
+read -r -s STASH_TOKEN
+```
+
+The input stays hidden. Then activate it for this terminal:
+
+```sh
+export STASH_TOKEN
+```
 
 For an HTTP API with bearer authentication:
 
@@ -49,6 +60,7 @@ stash route create database --secret DATABASE_URL --direct
 Existing AWS profiles continue to use `stash aws connect`. The raw AWS keys do not enter `stash run` children.
 New connection definitions cannot share a secret with another connection.
 If existing profiles reuse a key pair, consolidate their connection definitions before changing them.
+After the owner commands, run `unset STASH_TOKEN`.
 
 ## Update run commands
 
