@@ -85,6 +85,11 @@ func protectProxyResponse(response *http.Response, values []string) error {
 		}
 	}
 	redact(response.Header)
+	// A HEAD reply has no body to mask, and its Content-Length is the size of
+	// the object. The AWS CLI reads it before every S3 download.
+	if response.Request != nil && response.Request.Method == http.MethodHead {
+		return nil
+	}
 	response.Header.Del("Content-Length")
 	response.ContentLength = -1
 	response.Body = newMaskedBody(response.Body, values, func() { redact(response.Trailer) })

@@ -87,3 +87,24 @@ func TestProxyTakesStandInFromRouteHeader(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 }
+
+func TestProxyKeepsContentLengthOnHead(t *testing.T) {
+	e := newTestEnv(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "154")
+	}))
+	defer upstream.Close()
+	e.st.Set("HEAD_KEY", "head-only-real-key")
+	e.st.SetRoute(Route{Name: "head", Secret: "HEAD_KEY", Upstream: upstream.URL, Header: "X-Api-Key: {value}"})
+	agent := e.mustCreateToken(t, "head-agent", "agent")
+	req, _ := http.NewRequest("HEAD", e.srv.URL+"/proxy/head/object", nil)
+	req.Header.Set("X-Api-Key", agent)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.ContentLength != 154 {
+		t.Fatalf("HEAD Content-Length = %d, want 154", resp.ContentLength)
+	}
+}
