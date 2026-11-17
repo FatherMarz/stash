@@ -57,6 +57,7 @@ Proxy routes (need an owner STASH_TOKEN):
 
 AWS (the key pair stays in stash, stash signs each call):
   stash aws connect PROFILE --key-id SECRET --secret-key SECRET
+    [--read-api-host HOST --read-api-path PATH ...]
   stash aws creds PROFILE            the profile's credential_process
 
 Other:
@@ -170,6 +171,13 @@ func cmdServe(args []string) error {
 	}
 	log.Printf("stash %s listening on %s, data in %s", version, *addr, *data)
 	mux := newMux(st)
+	if *tlsCert == "" && *tlsKey == "" && (*addr == "127.0.0.1:8555" || *addr == "localhost:8555" || *addr == "[::1]:8555") {
+		stop, err := startLocalControl(*data, mux)
+		if err != nil {
+			return fmt.Errorf("local control: %w", err)
+		}
+		defer stop()
+	}
 	if *tlsCert != "" && *tlsKey != "" {
 		return http.ListenAndServeTLS(*addr, *tlsCert, *tlsKey, mux)
 	}

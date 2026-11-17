@@ -42,6 +42,13 @@ type Token struct {
 	Created time.Time `json:"created"`
 }
 
+// AWSReadAPI is an explicit, owner-approved read-only API Gateway destination.
+// Existing connections have no destination and continue to reject execute-api.
+type AWSReadAPI struct {
+	Host  string   `json:"host"`
+	Paths []string `json:"paths"`
+}
+
 // Route records an owner-approved API proxy, AWS signer, or direct handover.
 // Only a direct connection permits a run to receive a real value.
 type Route struct {
@@ -52,9 +59,10 @@ type Route struct {
 	// Kind "aws" signs AWS calls with a key pair: KeyID names the access key
 	// ID secret and Secret names the secret access key. Kind "direct" explicitly
 	// approves returning Secret to a selected child program.
-	Kind    string    `json:"kind,omitempty"`
-	KeyID   string    `json:"key_id,omitempty"`
-	Created time.Time `json:"created"`
+	Kind       string      `json:"kind,omitempty"`
+	KeyID      string      `json:"key_id,omitempty"`
+	Created    time.Time   `json:"created"`
+	AWSReadAPI *AWSReadAPI `json:"aws_read_api,omitempty"`
 }
 
 type AuditEntry struct {
@@ -515,6 +523,14 @@ func (s *Store) ResetOwner() (string, error) {
 
 // SetRoute creates or replaces an owner-approved connection.
 func (s *Store) SetRoute(r Route) error {
+	if r.AWSReadAPI != nil {
+		if r.Kind != "aws" {
+			return errors.New("a read-only AWS API needs an AWS connection")
+		}
+		if err := validateAWSReadAPI(r.AWSReadAPI); err != nil {
+			return err
+		}
+	}
 	if err := validName(r.Name); err != nil {
 		return err
 	}

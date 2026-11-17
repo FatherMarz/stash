@@ -136,7 +136,7 @@
   </div>
 
   <h2>Quick start</h2>
-  <p class="small">Use Go 1.25 or newer on macOS or Linux. Add Go's bin directory to your PATH after installation.</p>
+  <p class="small">Use Go 1.26.11 or newer on macOS or Linux. Add Go's bin directory to your PATH after installation.</p>
   <div class="codewrap"><pre><code>go install github.com/FatherMarz/stash@latest</code></pre></div>
   <p class="small">For a new store, run setup in your own terminal and save the owner token in your password manager. Existing users follow the <a href="https://github.com/FatherMarz/stash/blob/main/docs/safer-defaults.md">upgrade guide</a>.</p>
   <div class="codewrap"><pre><code>stash setup</code></pre></div>
@@ -170,7 +170,7 @@ unset STASH_TOKEN                  <span class="c"># return to agent access</spa
   <ul>
     <li>Secrets use AES-256-GCM in <span class="a">~/.stash/stash.db</span>. The default encryption key sits beside it in <span class="a">~/.stash/stash.key</span>. Back up both. stash does not isolate an agent that can read those files or control your OS account.</li>
     <li>stash listens on <span class="a">127.0.0.1</span> by default. Remote server access requires a custom address and TLS. Agent-token access remains local.</li>
-    <li>AWS presigned URLs, signed-chunk uploads, API Gateway and signed bodies over 256 MB are unsupported.</li>
+    <li>AWS presigned URLs, signed-chunk uploads and signed bodies over 256 MB are unsupported. API Gateway requires owner-approved GET paths. <a href="https://github.com/FatherMarz/stash/blob/main/docs/aws-read-api.md">Connection setup</a>.</li>
     <li>Existing unscoped scripts need explicit secret selections. Unconfigured values now require owner-approved connections.</li>
     <li><span class="a">stash help</span> lists every command. Each command maps to an HTTP route under <span class="a">/v1/</span>.</li>
     <li>An agent skill ships in the repo. It teaches Claude Code (or any agent) how to use stash.</li>
@@ -185,7 +185,7 @@ unset STASH_TOKEN                  <span class="c"># return to agent access</spa
 <script>
   const LLM_TEXT = `Set up stash 0.6.1, a local secrets store for agents: https://github.com/FatherMarz/stash
 
-1. Require Go1.25 or newer on macOS/Linux. Install: go install github.com/FatherMarz/stash@latest
+1. Require Go 1.26.11 or newer on macOS/Linux. Install: go install github.com/FatherMarz/stash@latest
    Ensure Go's bin directory is on PATH.
 2. For an uninitialized store only, the human runs stash setup in their own terminal with the server stopped.
    Setup shows the owner token once, stores the agent token for the CLI, and reports access states.

@@ -1,6 +1,8 @@
 module github.com/FatherMarz/stash
 
-go 1.25
+go 1.26.11
+
+toolchain go1.27.4
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.48.0

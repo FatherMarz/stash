@@ -6,7 +6,7 @@ import (
 )
 
 func TestGroupRows(t *testing.T) {
-	rows := groupRows([]string{"VIGI_KEY", "vigi-token", "seaport-admin", "seaport-ws1", "ADMIN_KEY", "solo"}, nil)
+	rows := groupRows([]string{"WIDGET_KEY", "widget-token", "acme-admin", "acme-ws1", "ADMIN_KEY", "solo"}, nil)
 	var got []string
 	for _, r := range rows {
 		if r.header != "" {
@@ -15,7 +15,7 @@ func TestGroupRows(t *testing.T) {
 			got = append(got, r.name)
 		}
 	}
-	want := []string{"#SEAPORT (2)", "seaport-admin", "seaport-ws1", "#VIGI (2)", "vigi-token", "VIGI_KEY", "#OTHER (2)", "ADMIN_KEY", "solo"}
+	want := []string{"#ACME (2)", "acme-admin", "acme-ws1", "#WIDGET (2)", "widget-token", "WIDGET_KEY", "#OTHER (2)", "ADMIN_KEY", "solo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
@@ -43,23 +43,23 @@ func rowNames(rows []uiRow) []string {
 }
 
 func TestGroupRowsCustom(t *testing.T) {
-	custom := map[string]string{"ADMIN_KEY": "Client work", "seaport-admin": "Client work", "solo": "Solo", "VIGI_KEY": "vigi"}
-	got := rowNames(groupRows([]string{"VIGI_KEY", "vigi-token", "seaport-admin", "seaport-ws1", "ADMIN_KEY", "solo"}, custom))
-	want := []string{"#Client work (2)", "ADMIN_KEY", "seaport-admin", "#Solo (1)", "solo", "#vigi (2)", "vigi-token", "VIGI_KEY", "#OTHER (1)", "seaport-ws1"}
+	custom := map[string]string{"ADMIN_KEY": "Client work", "acme-admin": "Client work", "solo": "Solo", "WIDGET_KEY": "widget"}
+	got := rowNames(groupRows([]string{"WIDGET_KEY", "widget-token", "acme-admin", "acme-ws1", "ADMIN_KEY", "solo"}, custom))
+	want := []string{"#Client work (2)", "acme-admin", "ADMIN_KEY", "#Solo (1)", "solo", "#widget (2)", "widget-token", "WIDGET_KEY", "#OTHER (1)", "acme-ws1"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
 }
 
 func TestCompleteText(t *testing.T) {
-	names := []string{"VIGI_BB_REPO_TOKEN", "VIGI_BB_SITE_TOKEN", "VIGI_HIT_SALT", "seaport-admin"}
+	names := []string{"WIDGET_BB_REPO_TOKEN", "WIDGET_BB_SITE_TOKEN", "WIDGET_HIT_SALT", "acme-admin"}
 	for in, want := range map[string]string{
-		"vi":     "VIGI_",
-		"vigi_b": "VIGI_BB_",
-		"sea":    "seaport-admin",
-		"SALT":   "VIGI_HIT_SALT",
-		"zzz":    "zzz",
-		"":       "",
+		"wi":       "WIDGET_",
+		"widget_b": "WIDGET_BB_",
+		"acm":      "acme-admin",
+		"SALT":     "WIDGET_HIT_SALT",
+		"zzz":      "zzz",
+		"":         "",
 	} {
 		if got := completeText(in, names); got != want {
 			t.Fatalf("completeText(%q) = %q, want %q", in, got, want)

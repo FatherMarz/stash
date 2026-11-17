@@ -16,8 +16,8 @@ import (
 
 // stash ui is a terminal screen for a person to browse, search, and edit
 // secrets. A secret sits in the group the owner gave it with g. Without
-// one, it groups by its first word (VIGI_KEY and vigi-token both go under
-// VIGI). Seeing or copying a value asks for the owner password once per
+// one, it groups by its first word (WIDGET_KEY and widget-token both go under
+// WIDGET). Seeing or copying a value asks for the owner password once per
 // session.
 
 const uiHelp = "↑↓ move  / search  tab complete  enter show  c copy  e edit  n new  r rename  g group  d delete  q quit"

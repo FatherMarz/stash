@@ -59,18 +59,7 @@ func (b *gzipBody) Close() error { b.Reader.Close(); return b.source.Close() }
 
 // Redact reflected credentials from responses, including streamed API errors.
 func protectProxyResponse(response *http.Response, values []string) error {
-	switch response.Header.Get("Content-Encoding") {
-	case "", "identity":
-	case "gzip":
-		reader, err := gzip.NewReader(response.Body)
-		if err != nil {
-			return err
-		}
-		response.Body = &gzipBody{reader, response.Body}
-		response.Header.Del("Content-Encoding")
-	default:
-		return fmt.Errorf("unsupported upstream response encoding")
-	}
+	encoding := response.Header.Get("Content-Encoding")
 	redact := func(headers http.Header) {
 		for key, entries := range headers {
 			for i, entry := range entries {
@@ -89,6 +78,20 @@ func protectProxyResponse(response *http.Response, values []string) error {
 	// the object. The AWS CLI reads it before every S3 download.
 	if response.Request != nil && response.Request.Method == http.MethodHead {
 		return nil
+	}
+	switch encoding {
+	case "":
+	case "identity":
+		response.Header.Del("Content-Encoding")
+	case "gzip":
+		reader, err := gzip.NewReader(response.Body)
+		if err != nil {
+			return err
+		}
+		response.Body = &gzipBody{reader, response.Body}
+		response.Header.Del("Content-Encoding")
+	default:
+		return fmt.Errorf("unsupported upstream response encoding")
 	}
 	response.Header.Del("Content-Length")
 	response.ContentLength = -1

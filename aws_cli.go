@@ -33,6 +33,12 @@ func cmdAWSConnect(args []string) error {
 	fs := flag.NewFlagSet("aws connect", flag.ContinueOnError)
 	keyID := fs.String("key-id", "", "secret that holds the access key ID")
 	secret := fs.String("secret-key", "", "secret that holds the secret access key")
+	readHost := fs.String("read-api-host", "", "owner-approved API Gateway hostname for GET requests")
+	var readPaths []string
+	fs.Func("read-api-path", "allowed exact GET path or trailing /* prefix; repeat as needed", func(value string) error {
+		readPaths = append(readPaths, value)
+		return nil
+	})
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -40,7 +46,14 @@ func cmdAWSConnect(args []string) error {
 		return errors.New("--key-id and --secret-key name the two secrets that hold the AWS key pair")
 	}
 	c := newClient()
-	if err := c.do("POST", "/v1/routes", Route{Name: profile, Kind: "aws", KeyID: *keyID, Secret: *secret}, nil); err != nil {
+	connection := Route{Name: profile, Kind: "aws", KeyID: *keyID, Secret: *secret}
+	if *readHost != "" || len(readPaths) != 0 {
+		connection.AWSReadAPI = &AWSReadAPI{Host: *readHost, Paths: readPaths}
+		if err := validateAWSReadAPI(connection.AWSReadAPI); err != nil {
+			return err
+		}
+	}
+	if err := c.do("POST", "/v1/routes", connection, nil); err != nil {
 		return err
 	}
 	if err := writeAWSProfile(awsConfigPath(), profile, c.addr); err != nil {

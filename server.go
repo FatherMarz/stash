@@ -24,6 +24,9 @@ type server struct {
 var peerCheck = callerIsStash
 
 func callerIsStash(r *http.Request) bool {
+	if verified, handled := localCallerIsStash(r); handled {
+		return verified
+	}
 	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
 	return ok && peerIsStash(r.RemoteAddr, local.String())
 }

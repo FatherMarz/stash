@@ -24,7 +24,7 @@ Do not migrate by reading or re-entering secret values.
 
 ## Stage the replacement
 
-Use Go 1.25 or newer on macOS or Linux.
+Use Go 1.26.11 or newer on macOS or Linux.
 Use a private staging directory before stopping the current service:
 
 ```sh

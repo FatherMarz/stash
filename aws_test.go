@@ -47,17 +47,17 @@ func TestAWSProxySignsWithStoredKeyPair(t *testing.T) {
 
 	e.st.Set("AWS_ID", "AKIAREALKEY0000")
 	e.st.Set("AWS_SECRET", "real-secret-access-key")
-	if err := e.st.SetRoute(Route{Name: "vigi", Kind: "aws", KeyID: "AWS_ID", Secret: "AWS_SECRET"}); err != nil {
+	if err := e.st.SetRoute(Route{Name: "demo", Kind: "aws", KeyID: "AWS_ID", Secret: "AWS_SECRET"}); err != nil {
 		t.Fatal(err)
 	}
 	agent := e.mustCreateToken(t, "aws-agent", "agent")
-	resp, body := e.req(t, agent, "POST", "/v1/aws/vigi", map[string]string{})
+	resp, body := e.req(t, agent, "POST", "/v1/aws/demo", map[string]string{})
 	if resp.StatusCode != 201 || strings.Contains(string(body), "real-secret") {
 		t.Fatalf("session = %d %s", resp.StatusCode, body)
 	}
 	token := strings.Split(strings.Split(string(body), `"token":"`)[1], `"`)[0]
 
-	req, _ := http.NewRequest("POST", e.srv.URL+"/aws/vigi/", strings.NewReader("Action=GetCallerIdentity&Version=2011-06-15"))
+	req, _ := http.NewRequest("POST", e.srv.URL+"/aws/demo/", strings.NewReader("Action=GetCallerIdentity&Version=2011-06-15"))
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=STASHPROXY/20261112/ca-central-1/sts/aws4_request, SignedHeaders=host, Signature=placeholder")
 	req.Header.Set("X-Amz-Security-Token", token)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -128,13 +128,13 @@ func TestAgentTokenOnlyThroughStashProgram(t *testing.T) {
 func TestWriteAWSProfileKeepsRegion(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config")
-	os.WriteFile(path, []byte("[profile other]\nregion = us-east-1\n\n[profile vigi]\nregion = ca-central-1\ncredential_process = /old/script.sh\ns3 =\n    addressing_style = virtual\noutput = json\n"), 0o600)
-	if err := writeAWSProfile(path, "vigi", "http://127.0.0.1:8555"); err != nil {
+	os.WriteFile(path, []byte("[profile other]\nregion = us-east-1\n\n[profile demo]\nregion = ca-central-1\ncredential_process = /old/script.sh\ns3 =\n    addressing_style = virtual\noutput = json\n"), 0o600)
+	if err := writeAWSProfile(path, "demo", "http://127.0.0.1:8555"); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
 	text := string(data)
-	for _, want := range []string{"region = ca-central-1", "output = json", "aws creds vigi", "endpoint_url = http://127.0.0.1:8555/aws/vigi", "addressing_style = path", "[profile other]\nregion = us-east-1"} {
+	for _, want := range []string{"region = ca-central-1", "output = json", "aws creds demo", "endpoint_url = http://127.0.0.1:8555/aws/demo", "addressing_style = path", "[profile other]\nregion = us-east-1"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in:\n%s", want, text)
 		}
@@ -147,11 +147,11 @@ func TestWriteAWSProfileKeepsRegion(t *testing.T) {
 func TestFindAWSProfilesUsingStashGet(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "creds.sh")
-	os.WriteFile(script, []byte("id=\"$(stash get VIGI_LENNY_KEY_ID)\"\nsecret=\"$(stash get VIGI_LENNY_KEY_SECRET)\"\n"), 0o700)
+	os.WriteFile(script, []byte("id=\"$(stash get DEMO_AGENT_KEY_ID)\"\nsecret=\"$(stash get DEMO_AGENT_KEY_SECRET)\"\n"), 0o700)
 	path := filepath.Join(dir, "config")
-	os.WriteFile(path, []byte("[profile vigi-lenny]\nregion = ca-central-1\ncredential_process = "+script+"\n"), 0o600)
+	os.WriteFile(path, []byte("[profile demo-agent]\nregion = ca-central-1\ncredential_process = "+script+"\n"), 0o600)
 	got := awsProfilesUsingStash(path)
-	if len(got) != 1 || got[0] != (awsLegacyProfile{"vigi-lenny", "VIGI_LENNY_KEY_ID", "VIGI_LENNY_KEY_SECRET"}) {
+	if len(got) != 1 || got[0] != (awsLegacyProfile{"demo-agent", "DEMO_AGENT_KEY_ID", "DEMO_AGENT_KEY_SECRET"}) {
 		t.Fatalf("found %+v", got)
 	}
 }

@@ -34,11 +34,13 @@ func newClient() *client {
 			token = strings.TrimSpace(string(data))
 		}
 	}
-	return &client{
+	c := &client{
 		addr:  addr,
 		token: token,
 		http:  &http.Client{Timeout: 10 * time.Second},
 	}
+	configureLocalHTTP(c.http, c.addr, defaultDataDir())
+	return c
 }
 
 func (c *client) request(ctx context.Context, hc *http.Client, method, path string, in any) (*http.Response, error) {
@@ -85,7 +87,7 @@ func (c *client) request(ctx context.Context, hc *http.Client, method, path stri
 
 // stream sends a request with no timeout and returns the open response.
 func (c *client) stream(ctx context.Context, method, path string, in any) (*http.Response, error) {
-	return c.request(ctx, &http.Client{}, method, path, in)
+	return c.request(ctx, &http.Client{Transport: c.http.Transport}, method, path, in)
 }
 
 func (c *client) do(method, path string, in, out any) error {

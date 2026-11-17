@@ -117,7 +117,16 @@ func (s *server) awsRequest(w http.ResponseWriter, r *http.Request, tok *Token) 
 	if path == "" {
 		path = "/"
 	}
-	host, err := awsHost(service, region, path)
+	var host string
+	if service == "execute-api" {
+		if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+			writeErr(w, http.StatusBadRequest, "read-only API requests cannot carry a body")
+			return
+		}
+		host, err = awsReadAPIHost(rt, region, r.Method, path)
+	} else {
+		host, err = awsHost(service, region, path)
+	}
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

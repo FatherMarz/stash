@@ -6,7 +6,8 @@ The agent prepares setup and connection commands. The owner runs commands that h
 
 ## Setup
 
-Use Go 1.25 or newer on macOS or Linux. After installation, put Go's bin directory on your PATH.
+Use Go 1.26.11 or newer on macOS or Linux. The preferred build toolchain is Go 1.27.4.
+After installation, put Go's bin directory on your PATH.
 
 ```sh
 go install github.com/FatherMarz/stash@latest
@@ -116,6 +117,16 @@ aws --profile my-profile sts get-caller-identity
 sends its calls to `http://127.0.0.1:8555/aws/my-profile`. stash signs each call with the real key pair
 and sends it to the AWS host for that service and region. The key pair never leaves stash.
 Presigned URLs and signed-chunk uploads cannot go through stash.
+
+API Gateway is blocked by default. An owner can approve one exact hostname and
+specific GET paths with `--read-api-host` and repeated `--read-api-path` options.
+This adds API Gateway access to an AWS connection. It does not restrict its other
+AWS services. The approved endpoints must use GET only for reads.
+See [API Gateway connection setup](docs/aws-read-api.md).
+
+On macOS, the local CLI uses a private socket when available. Remote, TLS, and
+custom-port clients keep their existing transport. See [local control and restart
+instructions](docs/local-control.md).
 
 ## Run a program
 

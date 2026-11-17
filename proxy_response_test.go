@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"io"
 	"net/http"
@@ -63,6 +64,34 @@ func TestProxyRedactsCompressedResponses(t *testing.T) {
 	}
 }
 
+func TestProxyClassifiesEncodingBeforeRedactingHeaders(t *testing.T) {
+	for _, encoding := range []string{"gzip", "identity"} {
+		t.Run(encoding, func(t *testing.T) {
+			var data bytes.Buffer
+			if encoding == "gzip" {
+				writer := gzip.NewWriter(&data)
+				io.WriteString(writer, "response "+encoding)
+				writer.Close()
+			} else {
+				data.WriteString("response " + encoding)
+			}
+			response := &http.Response{
+				Header:  http.Header{"Content-Encoding": []string{encoding}},
+				Body:    io.NopCloser(&data),
+				Request: &http.Request{Method: http.MethodGet},
+			}
+			if err := protectProxyResponse(response, []string{encoding}); err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			if err != nil || string(body) != "response ****" || response.Header.Get("Content-Encoding") != "" {
+				t.Fatalf("response decoding or masking failed: body=%q encoding=%q error=%v", body, response.Header.Get("Content-Encoding"), err)
+			}
+		})
+	}
+}
+
 func TestProxyTakesStandInFromRouteHeader(t *testing.T) {
 	const key = "real-vt-key"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -89,22 +118,31 @@ func TestProxyTakesStandInFromRouteHeader(t *testing.T) {
 }
 
 func TestProxyKeepsContentLengthOnHead(t *testing.T) {
-	e := newTestEnv(t)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", "154")
-	}))
-	defer upstream.Close()
-	e.st.Set("HEAD_KEY", "head-only-real-key")
-	e.st.SetRoute(Route{Name: "head", Secret: "HEAD_KEY", Upstream: upstream.URL, Header: "X-Api-Key: {value}"})
-	agent := e.mustCreateToken(t, "head-agent", "agent")
-	req, _ := http.NewRequest("HEAD", e.srv.URL+"/proxy/head/object", nil)
-	req.Header.Set("X-Api-Key", agent)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.ContentLength != 154 {
-		t.Fatalf("HEAD Content-Length = %d, want 154", resp.ContentLength)
+	for _, encoding := range []string{"identity", "gzip", "br"} {
+		t.Run(encoding, func(t *testing.T) {
+			e := newTestEnv(t)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", "154")
+				w.Header().Set("Content-Encoding", encoding)
+				w.Header().Set("X-Reflected-Key", "head-only-real-key")
+			}))
+			defer upstream.Close()
+			e.st.Set("HEAD_KEY", "head-only-real-key")
+			e.st.SetRoute(Route{Name: "head", Secret: "HEAD_KEY", Upstream: upstream.URL, Header: "X-Api-Key: {value}"})
+			agent := e.mustCreateToken(t, "head-agent", "agent")
+			req, _ := http.NewRequest("HEAD", e.srv.URL+"/proxy/head/object", nil)
+			req.Header.Set("X-Api-Key", agent)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || resp.ContentLength != 154 || resp.Header.Get("Content-Encoding") != encoding {
+				t.Fatalf("HEAD metadata changed: status=%d length=%d encoding=%q", resp.StatusCode, resp.ContentLength, resp.Header.Get("Content-Encoding"))
+			}
+			if resp.Header.Get("X-Reflected-Key") != "****" {
+				t.Fatal("HEAD response exposed reflected credentials")
+			}
+		})
 	}
 }
