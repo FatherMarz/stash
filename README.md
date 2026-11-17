@@ -80,6 +80,10 @@ export STASH_TOKEN
 
 Do not send that token to the agent. After the owner commands, run `unset STASH_TOKEN` to return to agent access.
 
+stash removes paired terminal paste markers and surrounding whitespace from `STASH_TOKEN`.
+An explicitly set token must be valid. Blank or malformed overrides produce an error instead of switching to agent access.
+Hidden password and secret prompts also remove paired paste markers, but preserve the value's spaces.
+
 ```sh
 stash route create service --upstream https://api.example.com --secret SERVICE_KEY
 ```

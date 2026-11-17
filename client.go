@@ -20,6 +20,34 @@ type client struct {
 	token    string
 	password string // owner password, sent only on reveal requests
 	http     *http.Client
+	initErr  error
+}
+
+func stripTerminalPaste(value string) string {
+	const start, end = "\x1b[200~", "\x1b[201~"
+	if strings.HasPrefix(value, start) && strings.HasSuffix(value, end) {
+		return value[len(start) : len(value)-len(end)]
+	}
+	return value
+}
+
+func validClientToken(token string) bool {
+	validPrefix := false
+	for _, prefix := range []string{"stash_owner_", "stash_agent_", "stash_run_"} {
+		if strings.HasPrefix(token, prefix) && len(token) > len(prefix) {
+			validPrefix = true
+			break
+		}
+	}
+	if !validPrefix {
+		return false
+	}
+	for _, ch := range token {
+		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func newClient() *client {
@@ -27,23 +55,35 @@ func newClient() *client {
 	if addr == "" {
 		addr = "http://127.0.0.1:8555"
 	}
-	token := os.Getenv("STASH_TOKEN")
-	// Setup manages the default agent token. Old token formats no longer work.
-	if !strings.HasPrefix(token, "stash_owner_") && !strings.HasPrefix(token, "stash_agent_") && !strings.HasPrefix(token, "stash_run_") {
+	token, explicit := os.LookupEnv("STASH_TOKEN")
+	var initErr error
+	if explicit {
+		token = strings.TrimSpace(stripTerminalPaste(strings.TrimSpace(token)))
+		if !validClientToken(token) {
+			initErr = errors.New("STASH_TOKEN is invalid. Supply an owner, agent, or run token, or unset STASH_TOKEN to use the default agent token")
+		}
+	} else {
 		if data, err := os.ReadFile(filepath.Join(defaultDataDir(), "agent.token")); err == nil {
 			token = strings.TrimSpace(string(data))
+			if !validClientToken(token) {
+				initErr = errors.New("the default agent token is invalid. Supply a current STASH_TOKEN")
+			}
 		}
 	}
 	c := &client{
-		addr:  addr,
-		token: token,
-		http:  &http.Client{Timeout: 10 * time.Second},
+		addr:    addr,
+		token:   token,
+		http:    &http.Client{Timeout: 10 * time.Second},
+		initErr: initErr,
 	}
 	configureLocalHTTP(c.http, c.addr, defaultDataDir())
 	return c
 }
 
 func (c *client) request(ctx context.Context, hc *http.Client, method, path string, in any) (*http.Response, error) {
+	if c.initErr != nil {
+		return nil, c.initErr
+	}
 	if c.token == "" {
 		return nil, errors.New("STASH_TOKEN is not set")
 	}

@@ -240,7 +240,7 @@ func readPassword(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, prompt)
 	b, err := term.ReadPassword(fd)
 	fmt.Fprintln(os.Stderr)
-	return string(b), err
+	return stripTerminalPaste(string(b)), err
 }
 
 func cmdGet(args []string) error {
