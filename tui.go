@@ -17,10 +17,10 @@ import (
 // stash ui is a terminal screen for a person to browse, search, and edit
 // secrets. A secret sits in the group the owner gave it with g. Without
 // one, it groups by its first word (WIDGET_KEY and widget-token both go under
-// WIDGET). Seeing or copying a value asks for the owner password once per
-// session.
+// WIDGET). Secrets without a path sit at the top, under BLOCKED. The screen
+// asks for the owner password once, when it opens.
 
-const uiHelp = "↑↓ move  / search  tab complete  enter show  c copy  e edit  n new  r rename  g group  d delete  q quit"
+const uiHelp = "↑↓ move  / search  enter show  c copy  e edit  n new  p path  r rename  g group  d delete  q quit"
 
 type uiMode int
 
@@ -30,6 +30,7 @@ const (
 	modePassword
 	modeInput
 	modeConfirm
+	modeChoice
 )
 
 type uiRow struct {
@@ -41,7 +42,9 @@ type uiModel struct {
 	c        *client
 	names    []string
 	groups   map[string]string // custom group per secret
-	complete []string          // tab completions for the current input
+	paths    map[string]string // proxy, aws, direct or blocked, per secret
+	routes   []Route
+	complete []string // tab completions for the current input
 	shown    map[string]string
 	rows     []uiRow
 	cursor   int // index into rows, always on a name row
@@ -55,6 +58,7 @@ type uiModel struct {
 	onInput  func(m *uiModel, text string)
 	onPass   func(m *uiModel)
 	onYes    func(m *uiModel)
+	choices  map[string]func(m *uiModel)
 	status   string
 	errState bool
 }
@@ -71,7 +75,11 @@ func cmdUI(args []string) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("stash ui needs a terminal")
 	}
-	m := &uiModel{c: newClient(), groups: map[string]string{}, shown: map[string]string{}, height: 24, width: 80}
+	m := &uiModel{c: newClient(), groups: map[string]string{}, paths: map[string]string{}, shown: map[string]string{}, height: 24, width: 80}
+	m.c.ask = false
+	if err := unlockUI(m.c); err != nil {
+		return err
+	}
 	m.search = textinput.New()
 	m.search.Prompt = "/ "
 	m.input = textinput.New()
@@ -82,13 +90,43 @@ func cmdUI(args []string) error {
 	return err
 }
 
+// unlockUI asks for the owner password before the screen opens, so every
+// action on the screen works without a second prompt.
+func unlockUI(c *client) error {
+	for try := 1; ; try++ {
+		pw, err := readPassword("owner password: ")
+		if err != nil {
+			return err
+		}
+		c.password = pw
+		err = c.do("GET", "/v1/tokens", nil, nil)
+		if err == nil {
+			return nil
+		}
+		c.password = ""
+		if try == 3 || !strings.Contains(err.Error(), "wrong owner password") {
+			return err
+		}
+		fmt.Println("wrong owner password, try again")
+	}
+}
+
 func (m *uiModel) reload() error {
 	var list struct {
-		Secrets []string `json:"secrets"`
+		Secrets []string          `json:"secrets"`
+		Paths   map[string]string `json:"paths"`
 	}
 	if err := m.c.do("GET", "/v1/secrets", nil, &list); err != nil {
 		return err
 	}
+	var routes struct {
+		Routes []Route `json:"routes"`
+	}
+	if err := m.c.do("GET", "/v1/routes", nil, &routes); err != nil {
+		return err
+	}
+	m.paths = list.Paths
+	m.routes = routes.Routes
 	var groups struct {
 		Groups map[string]string `json:"groups"`
 	}
@@ -112,7 +150,16 @@ func groupOf(name string) string {
 // groupRows sorts names into groups. A custom group wins. Otherwise a name
 // goes under its first word, and a first word with one name goes to OTHER.
 // Groups match without regard to case.
-func groupRows(names []string, custom map[string]string) []uiRow {
+func groupRows(names []string, custom map[string]string, paths map[string]string) []uiRow {
+	var blocked, open []string
+	for _, n := range names {
+		if paths[n] == "blocked" {
+			blocked = append(blocked, n)
+		} else {
+			open = append(open, n)
+		}
+	}
+	names = open
 	byKey := map[string][]string{}
 	label := map[string]string{}
 	isCustom := map[string]bool{}
@@ -147,6 +194,9 @@ func groupRows(names []string, custom map[string]string) []uiRow {
 		for _, n := range ns {
 			rows = append(rows, uiRow{name: n})
 		}
+	}
+	if len(blocked) > 0 {
+		add("BLOCKED: no path yet, press p", blocked)
 	}
 	for _, k := range keys {
 		add(label[k], byKey[k])
@@ -199,7 +249,7 @@ func completeText(text string, candidates []string) string {
 func (m *uiModel) groupNames() []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, r := range groupRows(m.names, m.groups) {
+	for _, r := range groupRows(m.names, m.groups, nil) {
 		if r.header == "" {
 			continue
 		}
@@ -221,7 +271,7 @@ func (m *uiModel) rebuild() {
 			names = append(names, n)
 		}
 	}
-	m.rows = groupRows(names, m.groups)
+	m.rows = groupRows(names, m.groups, m.paths)
 	m.cursor = -1
 	for i, r := range m.rows {
 		if r.name != "" && (m.cursor < 0 || r.name == current) {
@@ -254,11 +304,7 @@ func (m *uiModel) say(format string, a ...any) {
 }
 
 func (m *uiModel) fail(err error) {
-	msg := err.Error()
-	if strings.Contains(msg, "token role does not allow") {
-		msg += " (this needs your owner token: STASH_TOKEN=... stash ui)"
-	}
-	m.status, m.errState = msg, true
+	m.status, m.errState = err.Error(), true
 }
 
 // withValue fetches a value and hands it to then. If the server wants the
@@ -330,6 +376,13 @@ func (m *uiModel) ask(prompt, initial string, secret bool, then func(m *uiModel,
 	m.complete = nil
 }
 
+// choose shows one line of single-key choices. Any other key cancels.
+func (m *uiModel) choose(prompt string, choices map[string]func(m *uiModel)) {
+	m.mode = modeChoice
+	m.prompt = prompt
+	m.choices = choices
+}
+
 func (m *uiModel) confirm(prompt string, then func(m *uiModel)) {
 	m.mode = modeConfirm
 	m.prompt = prompt
@@ -378,6 +431,14 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSearch(msg)
 		case modePassword, modeInput:
 			return m.updateInput(msg)
+		case modeChoice:
+			m.mode = modeBrowse
+			if do, ok := m.choices[msg.String()]; ok {
+				do(m)
+			} else {
+				m.say("cancelled")
+			}
+			return m, nil
 		case modeConfirm:
 			if msg.String() == "y" {
 				m.mode = modeBrowse
@@ -573,6 +634,8 @@ func (m *uiModel) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.jumpTo(name)
 		})
 		m.complete = m.groupNames()
+	case "p":
+		m.pathMenu(name)
 	case "d":
 		m.confirm(fmt.Sprintf("delete %s? y/n", name), func(m *uiModel) {
 			if err := m.c.do("DELETE", "/v1/secrets/"+name, nil, nil); err != nil {
@@ -598,6 +661,9 @@ func (m *uiModel) jumpTo(name string) {
 func (m *uiModel) View() string {
 	var b strings.Builder
 	title := fmt.Sprintf("stash  %d secrets", len(m.names))
+	if n := m.blockedCount(); n > 0 {
+		title += fmt.Sprintf("  %d blocked", n)
+	}
 	b.WriteString(uiHeader.Render(title) + "\n")
 	if m.mode == modeSearch || m.search.Value() != "" {
 		b.WriteString(m.search.View() + "\n")
@@ -626,6 +692,9 @@ func (m *uiModel) View() string {
 		if i == m.cursor {
 			line = uiCursor.Render("  "+r.name) + strings.TrimPrefix(line, "  "+r.name)
 		}
+		if desc := m.pathText(r.name); desc != "" {
+			line += strings.Repeat(" ", max(2, 34-len(r.name))) + uiDim.Render(desc)
+		}
 		if v, ok := m.shown[r.name]; ok {
 			line += "  " + uiValue.Render(oneLine(v, m.width-len(r.name)-12))
 		}
@@ -641,7 +710,7 @@ func (m *uiModel) View() string {
 	switch m.mode {
 	case modePassword, modeInput:
 		b.WriteString(m.prompt + m.input.View() + "\n")
-	case modeConfirm:
+	case modeConfirm, modeChoice:
 		b.WriteString(uiErr.Render(m.prompt) + "\n")
 	default:
 		if m.errState {

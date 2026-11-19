@@ -156,7 +156,7 @@ func (s *server) runSession(w http.ResponseWriter, r *http.Request, tok *Token) 
 			direct = append(direct, name)
 			envNames[key] = true
 		default:
-			writeErr(w, 400, name+" is blocked; ask the owner to configure a proxy connection or explicitly approve direct access")
+			writeErr(w, 400, name+" is blocked: it has no path yet. Agent: find the API's site address and key header in its docs, and give both to the owner. Owner: open stash ui, select "+name+", press p")
 			return
 		}
 	}

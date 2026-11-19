@@ -2,7 +2,7 @@
 
 A small secrets store for agents. One Go binary, encrypted local storage, and an audit log.
 
-The agent prepares setup and connection commands. The owner runs commands that handle secrets or authorize connections in their own terminal.
+stash has one token and one owner password. Agents use the token. The person types the password for owner actions.
 
 ## Setup
 
@@ -13,50 +13,70 @@ After installation, put Go's bin directory on your PATH.
 go install github.com/FatherMarz/stash@latest
 ```
 
-For a new store, run setup in your own terminal:
+Run setup in your own terminal, with the server stopped:
 
 ```sh
 stash setup
 ```
 
-Save the owner token in your password manager. In a second terminal, start the server and leave it running:
+Setup does these things:
+
+1. It makes the stash token and puts it in `~/.stash/token`.
+2. It adds one line to `~/.zshrc` (or `~/.bashrc`) that loads the token into `STASH_TOKEN`.
+3. It asks you to choose the owner password.
+4. It reports the proxy, direct, and blocked secrets.
+5. It moves every AWS profile that read its keys with `stash get` to stash signing.
+
+Then start the server and leave it running:
 
 ```sh
 stash serve
 ```
 
-Return to the first terminal to add secrets and run programs. Existing stores use the migration guide instead of repeating setup.
+Background jobs do not load `~/.zshrc`. The CLI reads `~/.stash/token` by itself when `STASH_TOKEN` is empty.
+You can run setup again at any time. It keeps the token and the password.
 
-Run setup once, in your own terminal, while the server is stopped. Setup does four things:
+## The token and the password
 
-1. It shows the owner token once. Save it in your password manager. Never put it in a shell file.
-2. It stores an agent token in `~/.stash/agent.token`. The CLI uses it by itself. Agents need nothing.
-3. It reports the proxy, direct, and blocked secrets.
-4. It moves every AWS profile that read its keys with `stash get` to stash signing.
+- **Token:** lists names and paths, adds new secrets, and starts `stash run`. It works only through the stash program, so `curl` with it fails.
+- **Owner password:** every owner action asks for it. Owner actions read a value, change or delete a secret, add or change a path, and manage tokens and the audit log.
 
-The agent lists secret names and prepares the required connections. Unconfigured secrets stay blocked.
+Agents can read the token. The token alone cannot read a value or change a path.
+After five wrong passwords, owner actions lock for 15 minutes. Runs keep working.
 
 ## Secret access
 
-`stash list` shows how a program can use each secret. No run receives secrets until it names them explicitly.
+`stash list --paths` shows how a program can use each secret. No run receives secrets until it names them.
 
 | Path | Secrets | What the program gets |
 | --- | --- | --- |
-| proxy | API keys with a known site, and AWS key pairs | Never the key. For an API key: a run token and a `NAME_BASE_URL`, and stash adds the real key on the way out, only to that site. For AWS: the profile sends each call through stash, and stash signs it. |
-| direct | Secrets with an explicit owner-approved direct connection | The real value. Captured output masks matching values of at least eight bytes. |
-| blocked | Secrets without a built-in proxy or owner-approved connection | Nothing. The run fails before it starts the program or creates a run token. |
+| proxy | API keys with a known site, and AWS key pairs | Never the key. For an API key: a stand-in and a `NAME_BASE_URL`. stash adds the real key on the way out, only to that site. For AWS: the profile sends each call through stash, and stash signs it. |
+| direct | Secrets that the owner approved for direct use | The real value. Captured output masks matching values of at least eight bytes. |
+| blocked | Secrets with no path | Nothing. The run fails before it starts the program. |
 
 A proxy works only for calls to a website or AWS. A program that logs in to a database or signs data itself must hold the real value.
-
-API keys need proxy connections. An unknown API key does not fall back to a direct value.
-Database passwords and signing secrets can need direct access. The owner must approve that access explicitly.
-
 The direct path does not stop deliberate disclosure. Programs can write values to files or encode them before output.
 stash does not isolate an agent with access to your storage files or operating-system account.
 
-### Proxy
+## Paths in stash ui
 
-Built-in connections:
+```sh
+stash ui
+```
+
+The screen asks for the owner password once, when it opens.
+Blocked secrets show at the top. Each secret shows its path: the site, direct, or its AWS profile.
+
+Select a secret and press `p`:
+
+- `s` site: type the API's site address and its key header. The default header is `Authorization: Bearer {value}`.
+- `d` direct: the program gets the real value. Use this only for a database password or a signing secret.
+- `a` AWS: type the profile name and the secret that holds the access key ID. The selected secret is the secret access key.
+- `x` remove: the secret becomes blocked.
+
+Before it saves a site, the screen shows the site that the key will go to. Read it before you press `y`.
+
+### Built-in sites
 
 | Secret name | Fixed site |
 | --- | --- |
@@ -64,73 +84,36 @@ Built-in connections:
 | `ANTHROPIC_API_KEY` | `https://api.anthropic.com` |
 | Names with `OPENROUTER` that end in `API_KEY` | `https://openrouter.ai/api/v1` |
 
-For another API, the owner adds a connection once:
+### When an agent finds a blocked secret
 
-First activate the owner token in your own Bash or Zsh terminal. Run this command, paste the token, then press Enter:
+A run that names a blocked secret stops and tells the agent what to do.
+The agent finds the API's site address and key header in the API's documentation.
+It gives you three lines: the secret, the site, and the header. You type them in `stash ui`.
+The agent never needs the password or a value.
 
-```sh
-read -r -s STASH_TOKEN
-```
+### Paths from the command line
 
-The input stays hidden. Then run:
-
-```sh
-export STASH_TOKEN
-```
-
-Do not send that token to the agent. After the owner commands, run `unset STASH_TOKEN` to return to agent access.
-
-stash removes paired terminal paste markers and surrounding whitespace from `STASH_TOKEN`.
-An explicitly set token must be valid. Blank or malformed overrides produce an error instead of switching to agent access.
-Hidden password and secret prompts also remove paired paste markers, but preserve the value's spaces.
+The same changes work as commands. Each one asks for the owner password.
 
 ```sh
 stash route create service --upstream https://api.example.com --secret SERVICE_KEY
-```
-
-Point the SDK at `SERVICE_KEY_BASE_URL`. Agents cannot add or change a connection.
-
-stash sends the key as `Authorization: Bearer KEY` by default. If the API uses its own header, name it:
-
-```sh
 stash route create virustotal --upstream https://www.virustotal.com --secret VIRUSTOTAL_API_KEY --header "x-apikey: {value}"
-```
-
-The program sends its stand-in key in the same header. stash swaps it for the real key.
-
-### Owner-approved direct access
-
-For a database password or another value that a program must hold, the owner creates a direct connection:
-
-```sh
 stash route create database --secret DATABASE_URL --direct
-```
-
-The agent can prepare this command. Only the owner can authorize the connection.
-Do not use a direct connection for an API key. Configure the API's upstream and authentication header instead.
-Direct connections cannot include an upstream, header, or AWS key pair.
-
-### AWS
-
-```sh
 stash aws connect my-profile --key-id MY_KEY_ID --secret-key MY_SECRET_KEY
-aws --profile my-profile sts get-caller-identity
 ```
 
-`connect` writes the profile in `~/.aws/config`. The profile gets a one-hour run token from stash and
+## AWS
+
+An AWS path writes the profile in `~/.aws/config`. The profile gets a one-hour run token from stash and
 sends its calls to `http://127.0.0.1:8555/aws/my-profile`. stash signs each call with the real key pair
 and sends it to the AWS host for that service and region. The key pair never leaves stash.
 Presigned URLs and signed-chunk uploads cannot go through stash.
 
 API Gateway is blocked by default. An owner can approve one exact hostname and
 specific GET paths with `--read-api-host` and repeated `--read-api-path` options.
-This adds API Gateway access to an AWS connection. It does not restrict its other
-AWS services. The approved endpoints must use GET only for reads.
 See [API Gateway connection setup](docs/aws-read-api.md).
 
-On macOS, the local CLI uses a private socket when available. Remote, TLS, and
-custom-port clients keep their existing transport. See [local control and restart
-instructions](docs/local-control.md).
+On macOS, the local CLI uses a private socket when available. See [local control](docs/local-control.md).
 
 ## Run a program
 
@@ -140,54 +123,31 @@ stash run --secret OPENAI_API_KEY --secret DATABASE_URL -- python agent.py
 ```
 
 Repeat `--secret` for each required secret. An omitted or empty selection fails.
-The CLI and server enforce this rule. There is no implicit access to the full store.
-The database example requires the owner-approved direct connection shown above.
-
-Each `stash run` gets its own run token. The token works only for that program's proxy connections.
-It ends when the program exits. If `stash run` dies, the token stops working within one hour.
-A server restart ends every run token. Restart long-running programs after a server restart.
-
-## Two tokens
-
-- **Owner:** manages secrets, connections, and tokens. Reads values with the owner password.
-- **Agent:** works only through the stash program. It can list names, add new secrets, and start `stash run`.
-  It cannot read a value, change an existing secret, authorize connections, or call the proxy with `curl`.
-
-The agent-token workflow uses local process checks on macOS and Linux. It does not support remote agent-token clients.
+Each `stash run` gets its own run token. The run token works only for that program's proxy paths.
+It ends when the program exits. A server restart ends every run token. Restart long-running programs after a server restart.
 
 ## Agent-led setup
 
-1. Inspect the application to identify its required secret names and API endpoints.
-2. Install stash with the documented Go command.
-3. Ask the owner to run `stash setup` in their terminal with the server stopped.
-4. Ask the owner to save the owner token in their password manager.
-5. Start `stash serve` through the existing service or terminal workflow.
-6. Ask the owner to store new values with `stash set NAME` in their terminal.
-7. Run `stash list --json` to inspect names and paths without reading values.
-8. Prepare exact owner commands for missing proxy or direct connections.
-9. Configure the application to use its provided `NAME_BASE_URL`.
-10. Start it with the smallest explicit `--secret` selection.
-11. Use a harmless API request to check the connection without printing credentials.
+1. Inspect the application to find its secret names and API sites.
+2. Install stash with the Go command above.
+3. Ask the person to run `stash setup` in their terminal with the server stopped.
+4. Start `stash serve` through the existing service or terminal.
+5. Ask the person to store new values with `stash set NAME` in their terminal.
+6. Run `stash list --json` to inspect names and paths without reading values.
+7. For each blocked secret, give the person the secret, site and header to type in `stash ui`.
+8. Configure the application to use its `NAME_BASE_URL`.
+9. Start it with the smallest `--secret` selection.
 
-Do not ask for secrets, owner tokens, or owner passwords in chat.
-If setup is already complete, use the existing agent token. Do not reset owner access to repeat setup.
-
-## Existing scripts
-
-Version 0.6 requires changes to scripts that used an unscoped `stash run`.
-List only the secrets each script needs. Configure connections for blocked names before restarting those scripts.
-See [the migration guide](docs/safer-defaults.md).
+Do not ask for secrets or the owner password in chat.
 
 ## Owner commands
 
-Use the hidden owner-token entry above in that one terminal only.
-With `stash set NAME`, enter the secret at the hidden prompt and press Enter.
-For multiline data, pipe a file to the command. Inline values still work but can enter shell history.
+Each command asks for the owner password at a hidden prompt.
 
 ```sh
 stash ui
-stash get NAME                     # asks for the owner password if set
-stash set NAME
+stash get NAME
+stash set NAME                     # a new name needs no password
 stash rename OLD NEW
 stash delete NAME
 stash password set
@@ -195,18 +155,20 @@ stash token list
 stash audit --limit 50
 ```
 
-If you lose your owner token, stop the server and run `stash reset-owner` in your terminal.
-If you lose your password, stop the server and run `stash reset-password`.
+If you lose the password, stop the server, run `stash reset-password` in your terminal, then run `stash setup`.
 
-## Upgrade from versions before 0.5
+## Upgrade to 0.7
 
-0.5 needs fresh tokens. Older tokens stop working. Secrets, the password, and connections stay.
-0.5 has no open secrets. AWS profiles that read keys with `stash get` move to stash signing.
+0.7 has no owner token. Secrets, paths, and the password stay.
 
 1. Stop the server.
 2. Replace the binary. On macOS, copy the new binary beside the old one, then rename it over the old one.
-3. Run `stash setup` in your own terminal. Save the new owner token.
+3. Run `stash setup` in your own terminal. It keeps the agent token as the one token and ends the owner token.
+   It comments out old `export STASH_TOKEN=` lines in your shell files.
+   If no password is set, it asks you to choose one.
 4. Start the server, then restart programs that use `stash run`.
+
+Versions before 0.5 need [the older-version guide](docs/upgrade-0.5.md) first.
 
 Secrets use AES-256-GCM encryption in `~/.stash/stash.db`. Back up the database and `~/.stash/stash.key` together.
 Stash listens on loopback by default. For remote access, configure TLS.

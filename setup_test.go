@@ -40,19 +40,23 @@ func TestLegacyTokensRequireFreshSetupAndSecretsSurvive(t *testing.T) {
 	}
 }
 
-func TestAgentNeverRevealsValues(t *testing.T) {
+func TestTokenNeedsPasswordToRevealValues(t *testing.T) {
 	e := newTestEnv(t)
 	e.st.Set("OPEN", "private-value")
 	agent := e.mustCreateToken(t, "agent", "agent")
-	for _, password := range []string{"", testPW} {
+	for _, password := range []string{"", "guess"} {
 		resp, _ := e.reqPW(t, agent, password, "GET", "/v1/secrets/OPEN", nil)
 		if resp.StatusCode != 403 {
-			t.Fatal("agent read a value")
+			t.Fatal("token read a value without the owner password")
 		}
 	}
+	resp, _ := e.reqPW(t, agent, testPW, "GET", "/v1/secrets/OPEN", nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("token with owner password = %d, want 200", resp.StatusCode)
+	}
 	e.st.ClearPassword()
-	resp, _ := e.req(t, agent, "GET", "/v1/secrets/OPEN", nil)
+	resp, _ = e.req(t, agent, "GET", "/v1/secrets/OPEN", nil)
 	if resp.StatusCode != 403 {
-		t.Fatal("agent read a value without an owner password")
+		t.Fatal("token read a value with no owner password set")
 	}
 }

@@ -26,6 +26,38 @@ func tokenFallbackFixture(t *testing.T) string {
 	return token
 }
 
+// An empty STASH_TOKEN and a token from before 0.5 both fall back to the
+// token file. There is one token, so the fallback grants nothing extra.
+func TestClientUsesTokenFileForEmptyOrPre05Token(t *testing.T) {
+	for _, tc := range []struct{ name, input string }{
+		{"empty", ""},
+		{"whitespace", " \t\n"},
+		{"pre-0.5", "stash_" + strings.Repeat("ab", 24)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := tokenFallbackFixture(t)
+			t.Setenv("STASH_TOKEN", tc.input)
+			c := newClient()
+			if c.initErr != nil || c.token != want {
+				t.Fatalf("token = %q, err = %v; want the token file", c.token, c.initErr)
+			}
+		})
+	}
+}
+
+func TestClientPrefersTokenFileOverOldName(t *testing.T) {
+	old := tokenFallbackFixture(t)
+	home := os.Getenv("HOME")
+	const current = "stash_agent_synthetic-current"
+	if err := os.WriteFile(filepath.Join(home, ".stash", "token"), []byte(current+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STASH_TOKEN", "")
+	if c := newClient(); c.token != current || c.token == old {
+		t.Fatalf("token = %q, want %q", c.token, current)
+	}
+}
+
 func TestClientUsesExplicitTokenInsteadOfDefault(t *testing.T) {
 	for _, tc := range []struct {
 		name, input, want string
@@ -81,8 +113,6 @@ func TestClientRejectsMalformedExplicitTokenWithoutFallbackOrDisclosure(t *testi
 	for _, tc := range []struct {
 		name, token string
 	}{
-		{"empty", ""},
-		{"whitespace", " \t\n"},
 		{"old format", "stash_synthetic-old-token"},
 		{"bare owner prefix", "stash_owner_"},
 		{"bare agent prefix", "stash_agent_"},

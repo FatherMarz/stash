@@ -6,19 +6,19 @@ import (
 	"testing"
 )
 
-func TestEnvRequiresOwnerAndPassword(t *testing.T) {
+func TestEnvRequiresPassword(t *testing.T) {
 	e := newTestEnv(t)
 	e.st.Set("K", "v12345678")
 	agent := e.mustCreateToken(t, "agent", "agent")
 	for _, token := range []string{agent, e.admin} {
-		resp, _ := e.req(t, token, "GET", "/v1/env", nil)
+		resp, _ := e.reqPW(t, token, noPW, "GET", "/v1/env", nil)
 		if resp.StatusCode != 403 {
 			t.Fatalf("export without password = %d", resp.StatusCode)
 		}
 	}
 	resp, _ := e.reqPW(t, agent, testPW, "GET", "/v1/env", nil)
-	if resp.StatusCode != 403 {
-		t.Fatal("agent exported raw secrets with owner password")
+	if resp.StatusCode != 200 {
+		t.Fatalf("token with owner password export = %d, want 200", resp.StatusCode)
 	}
 }
 
@@ -69,15 +69,15 @@ func TestPasswordChangeRules(t *testing.T) {
 	e := newTestEnv(t)
 	rw := e.mustCreateToken(t, "agent", "agent")
 
-	resp, _ := e.reqPW(t, rw, testPW, "PUT", "/v1/password", map[string]string{"password": "new-password"})
+	resp, _ := e.req(t, rw, "PUT", "/v1/password", map[string]string{"password": "new-password"})
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("rw set password = %d, want 403", resp.StatusCode)
+		t.Fatalf("token change without old password = %d, want 403", resp.StatusCode)
 	}
-	resp, _ = e.req(t, e.admin, "PUT", "/v1/password", map[string]string{"password": "new-password"})
+	resp, _ = e.reqPW(t, rw, "guess", "PUT", "/v1/password", map[string]string{"password": "new-password"})
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("admin change without old password = %d, want 403", resp.StatusCode)
+		t.Fatalf("token change with wrong old password = %d, want 403", resp.StatusCode)
 	}
-	resp, body := e.reqPW(t, e.admin, testPW, "PUT", "/v1/password", map[string]string{"password": "new-password"})
+	resp, body := e.reqPW(t, rw, testPW, "PUT", "/v1/password", map[string]string{"password": "new-password"})
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("admin change = %d %s", resp.StatusCode, body)
 	}
@@ -86,20 +86,45 @@ func TestPasswordChangeRules(t *testing.T) {
 	}
 }
 
-func TestLockIsOffUntilPasswordSet(t *testing.T) {
+func TestNoOwnerActionsUntilPasswordSet(t *testing.T) {
 	e := newTestEnv(t)
 	if err := e.st.ClearPassword(); err != nil {
 		t.Fatal(err)
 	}
-	rw := e.mustCreateToken(t, "agent", "owner")
-	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
-	resp, body := e.req(t, rw, "GET", "/v1/secrets/K", nil)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "v1234") {
-		t.Fatalf("read with no password set = %d %s", resp.StatusCode, body)
+	rw, err := e.st.NewToken("agent", "agent")
+	if err != nil {
+		t.Fatal(err)
 	}
-	resp, _ = e.req(t, rw, "GET", "/v1/env", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("env with no password set = %d", resp.StatusCode)
+	resp, _ := e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("new secret with no password set = %d", resp.StatusCode)
+	}
+	for _, path := range []string{"/v1/secrets/K", "/v1/env", "/v1/tokens"} {
+		resp, body := e.req(t, rw, "GET", path, nil)
+		if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "no owner password yet") {
+			t.Fatalf("%s with no password set = %d %s", path, resp.StatusCode, body)
+		}
+	}
+	resp, _ = e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "changed"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("change with no password set = %d", resp.StatusCode)
+	}
+}
+
+func TestChangingASecretNeedsPassword(t *testing.T) {
+	e := newTestEnv(t)
+	rw := e.mustCreateToken(t, "agent", "agent")
+	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "first-value"})
+	resp, _ := e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "second-value"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("change without password = %d, want 403", resp.StatusCode)
+	}
+	resp, _ = e.reqPW(t, rw, testPW, "PUT", "/v1/secrets/K", map[string]string{"value": "second-value"})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("change with password = %d, want 204", resp.StatusCode)
+	}
+	if v, _ := e.st.Get("K"); v != "second-value" {
+		t.Fatalf("value = %q", v)
 	}
 }
 
@@ -127,7 +152,7 @@ func TestGroupsFollowSecrets(t *testing.T) {
 	e := newTestEnv(t)
 	rw := e.mustCreateToken(t, "agent", "owner")
 	e.req(t, rw, "PUT", "/v1/secrets/K", map[string]string{"value": "v1234"})
-	resp, _ := e.req(t, rw, "PUT", "/v1/groups/K", map[string]string{"group": "Client work"})
+	resp, _ := e.reqPW(t, rw, testPW, "PUT", "/v1/groups/K", map[string]string{"group": "Client work"})
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("set group = %d", resp.StatusCode)
 	}
@@ -135,11 +160,11 @@ func TestGroupsFollowSecrets(t *testing.T) {
 	if !strings.Contains(string(body), `"K":"Client work"`) {
 		t.Fatalf("groups = %s", body)
 	}
-	resp, _ = e.req(t, rw, "PUT", "/v1/groups/NOPE", map[string]string{"group": "x"})
+	resp, _ = e.reqPW(t, rw, testPW, "PUT", "/v1/groups/NOPE", map[string]string{"group": "x"})
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("group for missing secret = %d, want 404", resp.StatusCode)
 	}
-	e.req(t, rw, "DELETE", "/v1/secrets/K", nil)
+	e.reqPW(t, rw, testPW, "DELETE", "/v1/secrets/K", nil)
 	_, body = e.req(t, rw, "GET", "/v1/groups", nil)
 	if strings.Contains(string(body), "Client work") {
 		t.Fatalf("group outlived its secret: %s", body)

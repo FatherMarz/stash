@@ -17,39 +17,40 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "0.6.1"
+const version = "0.7.0"
 
 const usageText = `stash — a small secrets store for agents and scripts
 
-Server:
-  stash setup [--data DIR]           one-time setup in your terminal, server stopped
-  stash serve [--addr 127.0.0.1:8555] [--data DIR] [--tls-cert F --tls-key F]
-  stash reset-owner [--data DIR]     make a new owner token (offline recovery)
-  stash reset-password [--data DIR]  remove the owner password (offline recovery)
+One token does everything an agent needs. Setup puts it in ~/.stash/token and
+your shell start file. Owner actions also ask for the owner password.
 
-Secrets (need STASH_TOKEN, and STASH_ADDR if not local):
+Server:
+  stash setup [--data DIR]           setup or upgrade in your terminal, server stopped
+  stash serve [--addr 127.0.0.1:8555] [--data DIR] [--tls-cert F --tls-key F]
+  stash reset-password [--data DIR]  remove a lost owner password, then run setup
+
+Secrets:
   stash set NAME [VALUE]             hidden terminal prompt, or stdin when piped
-  stash get NAME                     print a value (asks for the owner password)
-  stash list [--paths|--json]        names and connection status; no values
-  stash ui                           browse, search, and edit secrets on one screen
+  stash get NAME                     print a value (owner)
+  stash list [--paths|--json]        names and paths; no values
+  stash ui                           secrets and paths on one screen (owner)
   stash rename OLD NEW
   stash delete NAME
   stash run --secret NAME [--secret NAME ...] -- COMMAND [ARGS...]
                                      run with named secrets on their approved paths
                                      unconfigured secrets are blocked
 
-Owner password (need an owner STASH_TOKEN and a terminal):
-  stash password set                 set or change the password that guards reads
-                                     (--data works offline, with the server stopped)
+Owner actions ask for the owner password at the terminal:
+  stash password set                 change the owner password
 
-Tokens (need an owner STASH_TOKEN):
-  stash token create NAME [--role agent|owner]
+Tokens (owner):
+  stash token create NAME
   stash token list
   stash token rename OLD NEW         same token value, new name
   stash token revoke NAME
   stash audit [--limit N]
 
-Proxy routes (need an owner STASH_TOKEN):
+Paths (owner; stash ui does the same with p):
   stash route create NAME --upstream URL --secret SECRET [--header "H: p {value}"]
   stash route create NAME --secret SECRET --direct
   stash route list [--json]
@@ -184,25 +185,10 @@ func cmdServe(args []string) error {
 	return http.ListenAndServe(*addr, mux)
 }
 
+// cmdResetOwner is the old recovery for a lost owner token. 0.7 has no owner
+// token. The owner password guards owner actions.
 func cmdResetOwner(args []string) error {
-	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return errors.New("run stash reset-owner in your own terminal")
-	}
-	fs := flag.NewFlagSet("reset-owner", flag.ExitOnError)
-	data := fs.String("data", defaultDataDir(), "data directory")
-	fs.Parse(args)
-
-	st, err := OpenStore(*data)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	plain, err := st.ResetOwner()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("new owner token (shown once, save it now): %s\n", plain)
-	return nil
+	return errors.New("stash has no owner token now. Owner actions ask for the owner password. If you lost it, run stash reset-password, then stash setup")
 }
 
 func cmdSet(args []string) error {
@@ -251,14 +237,7 @@ func cmdGet(args []string) error {
 	var out struct {
 		Value string `json:"value"`
 	}
-	err := c.do("GET", "/v1/secrets/"+args[0], nil, &out)
-	if isPasswordErr(err) {
-		if c.password, err = readPassword("owner password: "); err != nil {
-			return err
-		}
-		err = c.do("GET", "/v1/secrets/"+args[0], nil, &out)
-	}
-	if err != nil {
+	if err := c.do("GET", "/v1/secrets/"+args[0], nil, &out); err != nil {
 		return err
 	}
 	fmt.Println(out.Value)
@@ -333,12 +312,12 @@ func cmdPassword(args []string) error {
 	if err := c.do("GET", "/v1/password", nil, &status); err != nil {
 		return err
 	}
-	var old string
-	if status.Set {
-		var err error
-		if old, err = readPassword("current owner password: "); err != nil {
-			return err
-		}
+	if !status.Set {
+		return errors.New("stash has no owner password yet. Run stash setup in your own terminal")
+	}
+	old, err := readPassword("current owner password: ")
+	if err != nil {
+		return err
 	}
 	pw, err := readPassword("new owner password: ")
 	if err != nil {
@@ -352,10 +331,16 @@ func cmdPassword(args []string) error {
 		return errors.New("the two passwords do not match")
 	}
 	c.password = old
+	c.ask = false
 	return c.do("PUT", "/v1/password", map[string]string{"password": pw}, nil)
 }
 
 func cmdResetPassword(args []string) error {
+	// The password is the only owner gate, so only a person at a terminal
+	// can remove it.
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return errors.New("run stash reset-password in your own terminal")
+	}
 	fs := flag.NewFlagSet("reset-password", flag.ExitOnError)
 	data := fs.String("data", defaultDataDir(), "data directory")
 	fs.Parse(args)
@@ -368,7 +353,7 @@ func cmdResetPassword(args []string) error {
 	if err := st.ClearPassword(); err != nil {
 		return err
 	}
-	fmt.Println("owner password removed. Run `stash password set` to make a new one.")
+	fmt.Println("Owner password removed. Run stash setup to choose a new one.")
 	return nil
 }
 

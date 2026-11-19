@@ -11,6 +11,9 @@ import (
 
 const testPW = "correct horse"
 
+// noPW sends a request with no password header, even for the test owner.
+const noPW = "\x00no-password"
+
 type testEnv struct {
 	srv   *httptest.Server
 	st    *Store
@@ -32,7 +35,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	peerCheck = func(*http.Request) bool { return true }
 	srv := httptest.NewServer(newMux(st))
-	t.Cleanup(func() { srv.Close(); st.Close() })
+	cliPassword = testPW
+	t.Cleanup(func() { srv.Close(); st.Close(); cliPassword = "" })
 	return &testEnv{srv: srv, st: st, admin: admin}
 }
 
@@ -44,6 +48,12 @@ func (e *testEnv) req(t *testing.T, token, method, path string, body any) (*http
 // reqPW sends the request with the owner password header.
 func (e *testEnv) reqPW(t *testing.T, token, pw, method, path string, body any) (*http.Response, []byte) {
 	t.Helper()
+	if token == e.admin && pw == "" {
+		pw = testPW // the test owner is a person who knows the password
+	}
+	if pw == noPW {
+		pw = ""
+	}
 	var buf bytes.Buffer
 	if body != nil {
 		if err := json.NewEncoder(&buf).Encode(body); err != nil {
@@ -116,7 +126,7 @@ func TestSecretCRUDOverHTTP(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("get without password = %d, want 403", resp.StatusCode)
 	}
-	resp, _ = e.req(t, e.admin, "GET", "/v1/secrets/API_KEY", nil)
+	resp, _ = e.reqPW(t, e.admin, noPW, "GET", "/v1/secrets/API_KEY", nil)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("admin get without password = %d, want 403", resp.StatusCode)
 	}
@@ -137,6 +147,10 @@ func TestSecretCRUDOverHTTP(t *testing.T) {
 	}
 
 	resp, _ = e.req(t, rw, "DELETE", "/v1/secrets/API_KEY", nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("delete without password = %d, want 403", resp.StatusCode)
+	}
+	resp, _ = e.reqPW(t, rw, testPW, "DELETE", "/v1/secrets/API_KEY", nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete = %d", resp.StatusCode)
 	}
@@ -272,18 +286,14 @@ func TestProxyInjectsRealKeyAndHidesIt(t *testing.T) {
 		t.Fatalf("proxy body = %s", body)
 	}
 
-	// A proxy token must not read raw secrets or lists.
+	// The token alone must not read raw secrets.
 	resp, _ = e.req(t, px, "GET", "/v1/secrets/OPENAI", nil)
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("proxy token read secret = %d, want 403", resp.StatusCode)
+		t.Fatalf("token read secret = %d, want 403", resp.StatusCode)
 	}
-	resp, _ = e.reqPW(t, px, testPW, "GET", "/v1/secrets/OPENAI", nil)
+	resp, _ = e.reqPW(t, px, "guess", "GET", "/v1/env", nil)
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("proxy token read secret with password = %d, want 403", resp.StatusCode)
-	}
-	resp, _ = e.reqPW(t, px, testPW, "GET", "/v1/env", nil)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("proxy token env = %d, want 403", resp.StatusCode)
+		t.Fatalf("token env with a wrong password = %d, want 403", resp.StatusCode)
 	}
 }
 

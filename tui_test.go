@@ -6,7 +6,7 @@ import (
 )
 
 func TestGroupRows(t *testing.T) {
-	rows := groupRows([]string{"WIDGET_KEY", "widget-token", "acme-admin", "acme-ws1", "ADMIN_KEY", "solo"}, nil)
+	rows := groupRows([]string{"WIDGET_KEY", "widget-token", "acme-admin", "acme-ws1", "ADMIN_KEY", "solo"}, nil, nil)
 	var got []string
 	for _, r := range rows {
 		if r.header != "" {
@@ -44,7 +44,7 @@ func rowNames(rows []uiRow) []string {
 
 func TestGroupRowsCustom(t *testing.T) {
 	custom := map[string]string{"ADMIN_KEY": "Client work", "acme-admin": "Client work", "solo": "Solo", "WIDGET_KEY": "widget"}
-	got := rowNames(groupRows([]string{"WIDGET_KEY", "widget-token", "acme-admin", "acme-ws1", "ADMIN_KEY", "solo"}, custom))
+	got := rowNames(groupRows([]string{"WIDGET_KEY", "widget-token", "acme-admin", "acme-ws1", "ADMIN_KEY", "solo"}, custom, nil))
 	want := []string{"#Client work (2)", "acme-admin", "ADMIN_KEY", "#Solo (1)", "solo", "#widget (2)", "widget-token", "WIDGET_KEY", "#OTHER (1)", "acme-ws1"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)

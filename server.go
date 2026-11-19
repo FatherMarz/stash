@@ -49,7 +49,7 @@ func newMux(st *Store) *http.ServeMux {
 	mux.HandleFunc("POST /v1/run/renew", s.auth("agent", s.renewRun))
 	mux.HandleFunc("GET /v1/groups", s.auth("agent", s.listGroups))
 	mux.HandleFunc("PUT /v1/groups/{name}", s.auth("owner", s.setGroup))
-	mux.HandleFunc("GET /v1/password", s.auth("owner", s.passwordStatus))
+	mux.HandleFunc("GET /v1/password", s.auth("agent", s.passwordStatus))
 	mux.HandleFunc("PUT /v1/password", s.auth("owner", s.setPassword))
 	mux.HandleFunc("POST /v1/tokens", s.auth("owner", s.createToken))
 	mux.HandleFunc("GET /v1/tokens", s.auth("owner", s.listTokens))
@@ -67,9 +67,10 @@ func newMux(st *Store) *http.ServeMux {
 	return mux
 }
 
-// Owners manage the store. Agents can only discover names and use proxies.
+// One token works for everything. Owner actions also need the owner
+// password, which auth checks after the token.
 func roleAllows(have, need string) bool {
-	return (have == "owner" && (need == "owner" || need == "agent")) || (have == "agent" && need == "agent")
+	return have == "owner" || have == "agent"
 }
 
 func isStashToken(v string) bool {
@@ -109,7 +110,7 @@ func (s *server) auth(need string, h func(http.ResponseWriter, *http.Request, *T
 		}
 		tok, err := s.tokenForRequest(plain)
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "invalid or old token; stash 0.5 requires a new owner or agent token from stash setup")
+			writeErr(w, http.StatusUnauthorized, "invalid or old token. Run stash setup in your own terminal to get the current token")
 			return
 		}
 		run := strings.HasPrefix(plain, "stash_run_")
@@ -118,7 +119,10 @@ func (s *server) auth(need string, h func(http.ResponseWriter, *http.Request, *T
 			return
 		}
 		if tok.Role == "agent" && !run && !s.peerOK(r) {
-			writeErr(w, http.StatusForbidden, "the agent token works only through the stash command. Use stash run")
+			writeErr(w, http.StatusForbidden, "the stash token works only through the stash command. Use stash run")
+			return
+		}
+		if need == "owner" && !s.ownerPassword(w, r, tok, r.PathValue("name")) {
 			return
 		}
 		h(w, r, tok)
@@ -145,9 +149,6 @@ func (s *server) listSecrets(w http.ResponseWriter, r *http.Request, tok *Token)
 
 func (s *server) getSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
 	name := r.PathValue("name")
-	if !s.ownerPassword(w, r, tok, name) {
-		return
-	}
 	value, err := s.st.Get(name)
 	if errors.Is(err, ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "secret not found")
@@ -162,16 +163,18 @@ func (s *server) getSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
 }
 
 // ownerPassword checks the X-Stash-Password header. It writes the error
-// response and returns false on failure. Until the owner sets a password the
-// lock is off and every token reads as before.
+// response and returns false on failure. Every owner action needs the
+// password. A store without one allows no owner action until setup sets it.
 func (s *server) ownerPassword(w http.ResponseWriter, r *http.Request, tok *Token, secret string) bool {
 	err := s.guard.check(s.st, r.Header.Get("X-Stash-Password"))
 	switch {
-	case err == nil, errors.Is(err, ErrNoPassword):
+	case err == nil:
 		return true
+	case errors.Is(err, ErrNoPassword):
+		writeErr(w, http.StatusForbidden, "stash has no owner password yet. Run stash setup in your own terminal to set one")
 	case errors.Is(err, ErrNeedPassword):
-		s.st.Audit(tok.Name, "reveal-denied", secret)
-		writeErr(w, http.StatusForbidden, "reading a value needs the owner password. Agents: use `stash run` or a proxy route instead")
+		s.st.Audit(tok.Name, "owner-denied", secret)
+		writeErr(w, http.StatusForbidden, "this needs the owner password, typed by a person. Agents: use `stash run` or a proxy path instead")
 	case errors.Is(err, ErrWrongPassword):
 		s.st.Audit(tok.Name, "wrong-password", secret)
 		writeErr(w, http.StatusForbidden, "wrong owner password")
@@ -203,14 +206,6 @@ func (s *server) setPassword(w http.ResponseWriter, r *http.Request, tok *Token)
 		writeErr(w, http.StatusBadRequest, `body must be JSON: {"password": "..."}`)
 		return
 	}
-	has, err := s.st.HasPassword()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if has && !s.ownerPassword(w, r, tok, "") {
-		return
-	}
 	if err := s.st.SetPassword(r.Header.Get("X-Stash-Password"), body.Password); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -229,11 +224,9 @@ func (s *server) putSecret(w http.ResponseWriter, r *http.Request, tok *Token) {
 		writeErr(w, http.StatusBadRequest, `body must be JSON: {"value": "..."}`)
 		return
 	}
-	if tok.Role != "owner" {
-		if _, err := s.st.Get(name); err == nil {
-			writeErr(w, http.StatusForbidden, "only the owner can change an existing secret")
-			return
-		}
+	// A new name needs only the token. Changing a value needs the password.
+	if _, err := s.st.Get(name); err == nil && !s.ownerPassword(w, r, tok, name) {
+		return
 	}
 	if err := s.st.Set(name, body.Value); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -283,9 +276,6 @@ func (s *server) renameSecret(w http.ResponseWriter, r *http.Request, tok *Token
 
 // envSecrets is an owner-only export guarded by the owner password.
 func (s *server) envSecrets(w http.ResponseWriter, r *http.Request, tok *Token) {
-	if !s.ownerPassword(w, r, tok, "") {
-		return
-	}
 	all, err := s.st.All()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
