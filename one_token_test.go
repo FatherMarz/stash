@@ -180,3 +180,20 @@ func TestUIShowsBlockedFirstWithPaths(t *testing.T) {
 		t.Fatal("blocked count")
 	}
 }
+
+func TestServerStartsWithoutOwnerToken(t *testing.T) {
+	st, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if readyToServe(st) == nil {
+		t.Fatal("an empty store passed the start check")
+	}
+	if _, err := st.NewToken("default", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := readyToServe(st); err != nil {
+		t.Fatalf("store with only the one token: %v", err)
+	}
+}

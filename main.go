@@ -147,18 +147,8 @@ func cmdServe(args []string) error {
 	}
 	defer st.Close()
 
-	tokens, err := st.ListTokens()
-	if err != nil {
+	if err := readyToServe(st); err != nil {
 		return err
-	}
-	hasOwner := false
-	for _, token := range tokens {
-		if token.Role == "owner" {
-			hasOwner = true
-		}
-	}
-	if !hasOwner {
-		return errors.New("new owner and agent tokens required: stop stash, run stash setup in your terminal, then start stash again")
 	}
 	if *tlsCert == "" || *tlsKey == "" {
 		host, _, splitErr := net.SplitHostPort(*addr)
@@ -183,6 +173,21 @@ func cmdServe(args []string) error {
 		return http.ListenAndServeTLS(*addr, *tlsCert, *tlsKey, mux)
 	}
 	return http.ListenAndServe(*addr, mux)
+}
+
+// readyToServe needs the token that setup makes. Stores from before 0.5
+// have only old tokens and must run setup first.
+func readyToServe(st *Store) error {
+	tokens, err := st.ListTokens()
+	if err != nil {
+		return err
+	}
+	for _, token := range tokens {
+		if token.Role == "agent" || token.Role == "owner" {
+			return nil
+		}
+	}
+	return errors.New("no stash token: stop stash, run stash setup in your terminal, then start stash again")
 }
 
 // cmdResetOwner is the old recovery for a lost owner token. 0.7 has no owner
